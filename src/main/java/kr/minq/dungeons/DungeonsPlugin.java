@@ -12,13 +12,16 @@ import java.util.Locale;
 public final class DungeonsPlugin extends JavaPlugin {
     private PartyManager partyManager;
     private TestDungeonManager dungeonManager;
+    private TemplateWorldManager templateWorldManager;
 
     @Override
     public void onEnable() {
         partyManager = new PartyManager();
         dungeonManager = new TestDungeonManager(this);
+        templateWorldManager = new TemplateWorldManager(this);
         Bukkit.getPluginManager().registerEvents(dungeonManager, this);
-        getLogger().info("Dungeons 0.2.0 enabled for Paper 1.20.1");
+        Bukkit.getPluginManager().registerEvents(templateWorldManager, this);
+        getLogger().info("Dungeons 0.3.0 enabled for Paper 1.20.1");
     }
 
     @Override
@@ -42,12 +45,70 @@ public final class DungeonsPlugin extends JavaPlugin {
         String sub = args[0].toLowerCase(Locale.ROOT);
         switch (sub) {
             case "party" -> handleParty(sender, args);
+            case "templateworld" -> handleTemplateWorld(sender, args);
+            case "template" -> handleTemplate(sender, args);
             case "start" -> handleStart(sender);
             case "stop" -> handleStop(sender);
             case "status" -> handleStatus(sender);
             default -> sender.sendMessage("§c알 수 없는 명령어입니다. /dungeon help");
         }
         return true;
+    }
+
+    private void handleTemplateWorld(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§c플레이어만 사용할 수 있습니다.");
+            return;
+        }
+        if (!player.hasPermission("dungeons.admin")) {
+            player.sendMessage("§c관리자 권한이 필요합니다.");
+            return;
+        }
+        if (args.length < 2) {
+            player.sendMessage("§e/dungeon templateworld create");
+            player.sendMessage("§e/dungeon templateworld enter");
+            player.sendMessage("§e/dungeon templateworld leave");
+            return;
+        }
+        switch (args[1].toLowerCase(Locale.ROOT)) {
+            case "create" -> {
+                if (templateWorldManager.createOrLoadWorld() == null) {
+                    player.sendMessage("§c템플릿 월드 생성에 실패했습니다.");
+                } else {
+                    player.sendMessage("§6§l[Dungeons] §a템플릿 월드를 생성하거나 불러왔습니다.");
+                }
+            }
+            case "enter" -> player.sendMessage("§6§l[Dungeons] §f" + templateWorldManager.enter(player));
+            case "leave" -> player.sendMessage("§6§l[Dungeons] §f" + templateWorldManager.leave(player));
+            default -> player.sendMessage("§c알 수 없는 templateworld 명령어입니다.");
+        }
+    }
+
+    private void handleTemplate(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§c플레이어만 사용할 수 있습니다.");
+            return;
+        }
+        if (!player.hasPermission("dungeons.admin")) {
+            player.sendMessage("§c관리자 권한이 필요합니다.");
+            return;
+        }
+        if (args.length < 2) {
+            player.sendMessage("§e/dungeon template wand");
+            player.sendMessage("§e/dungeon template pos1");
+            player.sendMessage("§e/dungeon template pos2");
+            player.sendMessage("§e/dungeon template info");
+            player.sendMessage("§e/dungeon template clear");
+            return;
+        }
+        switch (args[1].toLowerCase(Locale.ROOT)) {
+            case "wand" -> player.sendMessage("§6§l[Dungeons] §f" + templateWorldManager.giveWand(player));
+            case "pos1" -> player.sendMessage(templateWorldManager.setPosition(player, true));
+            case "pos2" -> player.sendMessage(templateWorldManager.setPosition(player, false));
+            case "info" -> player.sendMessage(templateWorldManager.info(player));
+            case "clear", "clearselection" -> player.sendMessage("§6§l[Dungeons] §f" + templateWorldManager.clearSelection(player));
+            default -> player.sendMessage("§c알 수 없는 template 명령어입니다.");
+        }
     }
 
     private void handleParty(CommandSender sender, String[] args) {
@@ -135,8 +196,10 @@ public final class DungeonsPlugin extends JavaPlugin {
     }
 
     private void sendHelp(CommandSender sender) {
-        sender.sendMessage("§6§lDungeons 0.2.0 §7- Paper 1.20.1");
+        sender.sendMessage("§6§lDungeons 0.3.0 §7- Paper 1.20.1");
         sender.sendMessage("§e/dungeon party §7- 파티 명령어");
+        sender.sendMessage("§e/dungeon templateworld §7- 템플릿 전용 월드 관리");
+        sender.sendMessage("§e/dungeon template §7- 템플릿 선택 도구와 영역 설정");
         sender.sendMessage("§e/dungeon start §7- 파티와 테스트 던전 시작");
         sender.sendMessage("§e/dungeon stop §7- 관리자 강제 종료");
         sender.sendMessage("§e/dungeon status §7- 현재 상태 확인");
