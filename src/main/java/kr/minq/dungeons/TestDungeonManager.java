@@ -8,6 +8,7 @@ import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.WorldType;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
@@ -196,13 +197,18 @@ public final class TestDungeonManager implements Listener {
         LivingEntity elite = (LivingEntity) world.spawnEntity(new Location(world, 0.5, 81, -1.5), EntityType.HUSK);
         elite.setCustomName("§c§l엘리트 사형집행자");
         elite.setCustomNameVisible(true);
-        if (elite.getAttribute(Attribute.GENERIC_MAX_HEALTH) != null) {
-            elite.getAttribute(Attribute.GENERIC_MAX_HEALTH).setBaseValue(60.0);
+
+        AttributeInstance maxHealth = elite.getAttribute(Attribute.MAX_HEALTH);
+        if (maxHealth != null) {
+            maxHealth.setBaseValue(60.0);
             elite.setHealth(60.0);
         }
-        if (elite.getAttribute(Attribute.GENERIC_ATTACK_DAMAGE) != null) {
-            elite.getAttribute(Attribute.GENERIC_ATTACK_DAMAGE).setBaseValue(8.0);
+
+        AttributeInstance attackDamage = elite.getAttribute(Attribute.ATTACK_DAMAGE);
+        if (attackDamage != null) {
+            attackDamage.setBaseValue(8.0);
         }
+
         dungeonMobs.add(elite.getUniqueId());
         totalMobs = dungeonMobs.size();
     }
