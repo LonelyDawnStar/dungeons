@@ -8,8 +8,8 @@ commands:
   dungeon:
     aliases: [dg]
     description: Dungeons main command
-    usage: /dungeon <help|party|start|stop|status>
+    usage: /dungeon <help|party|templateworld|template|start|stop|status>
 permissions:
   dungeons.admin:
-    description: Allows forced dungeon shutdown
+    description: Allows dungeon administration and template editing
     default: op
