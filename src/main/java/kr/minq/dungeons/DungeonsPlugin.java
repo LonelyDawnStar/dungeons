@@ -6,7 +6,9 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
 
 public final class DungeonsPlugin extends JavaPlugin {
@@ -53,6 +55,54 @@ public final class DungeonsPlugin extends JavaPlugin {
             default -> sender.sendMessage("§c알 수 없는 명령어입니다. /dungeon help");
         }
         return true;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (!command.getName().equalsIgnoreCase("dungeon")) {
+            return List.of();
+        }
+
+        if (args.length == 1) {
+            List<String> roots = new ArrayList<>(List.of("help", "party", "start", "status"));
+            if (sender.hasPermission("dungeons.admin")) {
+                roots.add("stop");
+                roots.add("templateworld");
+                roots.add("template");
+            }
+            return filterSuggestions(roots, args[0]);
+        }
+
+        if (args.length == 2) {
+            return switch (args[0].toLowerCase(Locale.ROOT)) {
+                case "party" -> filterSuggestions(List.of("create", "invite", "accept", "leave", "list"), args[1]);
+                case "templateworld" -> sender.hasPermission("dungeons.admin")
+                        ? filterSuggestions(List.of("create", "enter", "leave"), args[1])
+                        : List.of();
+                case "template" -> sender.hasPermission("dungeons.admin")
+                        ? filterSuggestions(List.of("wand", "pos1", "pos2", "info", "clear"), args[1])
+                        : List.of();
+                default -> List.of();
+            };
+        }
+
+        if (args.length == 3 && args[0].equalsIgnoreCase("party") && args[1].equalsIgnoreCase("invite")) {
+            List<String> playerNames = Bukkit.getOnlinePlayers().stream()
+                    .map(Player::getName)
+                    .filter(name -> !(sender instanceof Player player) || !name.equalsIgnoreCase(player.getName()))
+                    .toList();
+            return filterSuggestions(playerNames, args[2]);
+        }
+
+        return List.of();
+    }
+
+    private List<String> filterSuggestions(Collection<String> values, String input) {
+        String lowerInput = input.toLowerCase(Locale.ROOT);
+        return values.stream()
+                .filter(value -> value.toLowerCase(Locale.ROOT).startsWith(lowerInput))
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
     }
 
     private void handleTemplateWorld(CommandSender sender, String[] args) {
