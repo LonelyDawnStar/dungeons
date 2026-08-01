@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "kr.minq"
-version = "0.4.1"
+version = "0.5.0"
 
 repositories {
     mavenCentral()
@@ -14,15 +14,16 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:1.20.1-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:26.2.build.+")
 }
 
 java {
-    toolchain.languageVersion.set(JavaLanguageVersion.of(17))
+    toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 }
 
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
+    options.release.set(25)
 }
 
 tasks.named<ProcessResources>("processResources") {
