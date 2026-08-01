@@ -7,15 +7,10 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
-import org.bukkit.entity.Ageable;
-import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Phantom;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.Slime;
-import org.bukkit.entity.Zombie;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -25,7 +20,6 @@ import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
@@ -42,6 +36,8 @@ public final class CustomMobEditorManager implements Listener {
     private static final String GUI_TITLE = "§8커스텀 몬스터 편집";
     private static final double DEFAULT_HEALTH = 20.0;
     private static final double DEFAULT_DAMAGE = 4.0;
+    private static final double MIN_SCALE = 0.25;
+    private static final double MAX_SCALE = 4.0;
     private static final List<String> ABILITIES = List.of("NONE", "DASH", "FIREBALL", "HEAL", "SUMMON");
 
     private final JavaPlugin plugin;
@@ -50,7 +46,7 @@ public final class CustomMobEditorManager implements Listener {
     private final NamespacedKey damageKey;
     private final NamespacedKey aggressiveKey;
     private final NamespacedKey abilityKey;
-    private final NamespacedKey sizeKey;
+    private final NamespacedKey scaleKey;
     private final NamespacedKey yawKey;
     private final NamespacedKey cloneToolKey;
     private final NamespacedKey cloneTypeKey;
@@ -59,7 +55,7 @@ public final class CustomMobEditorManager implements Listener {
     private final NamespacedKey cloneDamageKey;
     private final NamespacedKey cloneAggressiveKey;
     private final NamespacedKey cloneAbilityKey;
-    private final NamespacedKey cloneSizeKey;
+    private final NamespacedKey cloneScaleKey;
     private final NamespacedKey cloneYawKey;
 
     private final Map<UUID, UUID> editingTargets = new HashMap<>();
@@ -72,7 +68,7 @@ public final class CustomMobEditorManager implements Listener {
         damageKey = new NamespacedKey(plugin, "custom_mob_damage");
         aggressiveKey = new NamespacedKey(plugin, "custom_mob_aggressive");
         abilityKey = new NamespacedKey(plugin, "custom_mob_ability");
-        sizeKey = new NamespacedKey(plugin, "custom_mob_size");
+        scaleKey = new NamespacedKey(plugin, "custom_mob_scale");
         yawKey = new NamespacedKey(plugin, "custom_mob_yaw");
         cloneToolKey = new NamespacedKey(plugin, "custom_mob_clone_tool");
         cloneTypeKey = new NamespacedKey(plugin, "clone_type");
@@ -81,7 +77,7 @@ public final class CustomMobEditorManager implements Listener {
         cloneDamageKey = new NamespacedKey(plugin, "clone_damage");
         cloneAggressiveKey = new NamespacedKey(plugin, "clone_aggressive");
         cloneAbilityKey = new NamespacedKey(plugin, "clone_ability");
-        cloneSizeKey = new NamespacedKey(plugin, "clone_size");
+        cloneScaleKey = new NamespacedKey(plugin, "clone_scale");
         cloneYawKey = new NamespacedKey(plugin, "clone_yaw");
     }
 
@@ -112,12 +108,11 @@ public final class CustomMobEditorManager implements Listener {
 
     @EventHandler(ignoreCancelled = true)
     public void onCloneToolUse(PlayerInteractEvent event) {
-        if (event.getClickedBlock() == null || event.getItem() == null) return;
-        if (!isCloneTool(event.getItem())) return;
+        if (event.getClickedBlock() == null || event.getItem() == null || !isCloneTool(event.getItem())) return;
         Player player = event.getPlayer();
         if (!player.hasPermission("dungeons.admin")) return;
         if (!player.getWorld().getName().equals(TemplateWorldManager.WORLD_NAME)) {
-            player.sendMessage("§c커스텀 몹 배치 도구는 템플릿 월드에서만 사용할 수 있습니다.");
+            player.sendMessage("§c배치 도구는 템플릿 월드에서만 사용할 수 있습니다.");
             return;
         }
 
@@ -136,9 +131,9 @@ public final class CustomMobEditorManager implements Listener {
         }
 
         Float yaw = data.get(cloneYawKey, PersistentDataType.FLOAT);
-        Location spawnLocation = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0.0, 0.5);
-        spawnLocation.setYaw(yaw == null ? player.getLocation().getYaw() : yaw);
-        Entity spawned = player.getWorld().spawnEntity(spawnLocation, type);
+        Location location = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0.0, 0.5);
+        location.setYaw(yaw == null ? player.getLocation().getYaw() : yaw);
+        Entity spawned = player.getWorld().spawnEntity(location, type);
         if (!(spawned instanceof LivingEntity living)) {
             spawned.remove();
             return;
@@ -152,6 +147,7 @@ public final class CustomMobEditorManager implements Listener {
         if (!GUI_TITLE.equals(event.getView().getTitle())) return;
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
+
         UUID entityId = editingTargets.get(player.getUniqueId());
         Entity raw = entityId == null ? null : Bukkit.getEntity(entityId);
         if (!(raw instanceof LivingEntity entity) || !entity.isValid()) {
@@ -160,25 +156,22 @@ public final class CustomMobEditorManager implements Listener {
             return;
         }
 
-        int slot = event.getRawSlot();
         boolean right = event.isRightClick();
         boolean shift = event.isShiftClick();
         double amount = shift ? 10.0 : 1.0;
 
-        switch (slot) {
+        switch (event.getRawSlot()) {
             case 10 -> {
                 awaitingName.put(player.getUniqueId(), entity.getUniqueId());
                 player.closeInventory();
-                player.sendMessage("§e채팅에 새 이름을 입력하세요. §7취소하려면 §fcancel§7을 입력하세요.");
+                player.sendMessage("§e채팅에 새 이름을 입력하세요. §7취소: §fcancel");
             }
             case 12 -> {
-                double next = getHealth(entity) + (right ? -amount : amount);
-                setHealth(entity, Math.max(1.0, Math.min(2048.0, next)));
+                setHealth(entity, clamp(getHealth(entity) + (right ? -amount : amount), 1.0, 2048.0));
                 openEditor(player, entity);
             }
             case 14 -> {
-                double next = getDamage(entity) + (right ? -amount : amount);
-                setDamage(entity, Math.max(0.0, Math.min(1024.0, next)));
+                setDamage(entity, clamp(getDamage(entity) + (right ? -amount : amount), 0.0, 1024.0));
                 openEditor(player, entity);
             }
             case 16 -> {
@@ -187,11 +180,12 @@ public final class CustomMobEditorManager implements Listener {
             }
             case 18 -> {
                 float step = shift ? 90.0f : 15.0f;
-                rotate(entity, right ? step : -step);
+                setYaw(entity, getYaw(entity) + (right ? step : -step));
                 openEditor(player, entity);
             }
             case 20 -> {
-                cycleSize(entity, right ? -1 : 1);
+                double step = shift ? 0.5 : 0.1;
+                setScale(entity, getScale(entity) + (right ? -step : step));
                 openEditor(player, entity);
             }
             case 22 -> {
@@ -212,8 +206,7 @@ public final class CustomMobEditorManager implements Listener {
                 player.closeInventory();
                 player.sendMessage("§c프리뷰 몬스터를 삭제했습니다.");
             }
-            default -> {
-            }
+            default -> { }
         }
     }
 
@@ -245,8 +238,8 @@ public final class CustomMobEditorManager implements Listener {
     }
 
     private void makePreview(LivingEntity entity, ItemStack cloneSource) {
-        PersistentDataContainer data = entity.getPersistentDataContainer();
-        data.set(previewKey, PersistentDataType.BYTE, (byte) 1);
+        PersistentDataContainer entityData = entity.getPersistentDataContainer();
+        entityData.set(previewKey, PersistentDataType.BYTE, (byte) 1);
         entity.setAI(false);
         entity.setInvulnerable(true);
         entity.setSilent(true);
@@ -255,11 +248,11 @@ public final class CustomMobEditorManager implements Listener {
         entity.setRemoveWhenFarAway(false);
 
         if (cloneSource == null || !cloneSource.hasItemMeta()) {
-            setHealth(entity, Math.max(1.0, currentMaxHealth(entity)));
-            setDamage(entity, currentAttackDamage(entity));
+            setHealth(entity, Math.max(1.0, currentAttribute(entity, Attribute.MAX_HEALTH, DEFAULT_HEALTH)));
+            setDamage(entity, currentAttribute(entity, Attribute.ATTACK_DAMAGE, DEFAULT_DAMAGE));
             setAggressive(entity, false);
             setAbility(entity, "NONE");
-            data.set(sizeKey, PersistentDataType.INTEGER, currentSize(entity));
+            setScale(entity, currentAttribute(entity, Attribute.SCALE, 1.0));
             setYaw(entity, entity.getLocation().getYaw());
             entity.setCustomName("§c" + prettyEntityName(entity.getType()));
             entity.setCustomNameVisible(true);
@@ -272,7 +265,7 @@ public final class CustomMobEditorManager implements Listener {
         Double damage = source.get(cloneDamageKey, PersistentDataType.DOUBLE);
         Byte aggressive = source.get(cloneAggressiveKey, PersistentDataType.BYTE);
         String ability = source.get(cloneAbilityKey, PersistentDataType.STRING);
-        Integer size = source.get(cloneSizeKey, PersistentDataType.INTEGER);
+        Double scale = source.get(cloneScaleKey, PersistentDataType.DOUBLE);
         Float yaw = source.get(cloneYawKey, PersistentDataType.FLOAT);
 
         entity.setCustomName(name == null ? "§c" + prettyEntityName(entity.getType()) : name);
@@ -281,7 +274,7 @@ public final class CustomMobEditorManager implements Listener {
         setDamage(entity, damage == null ? DEFAULT_DAMAGE : damage);
         setAggressive(entity, aggressive != null && aggressive == (byte) 1);
         setAbility(entity, ability == null ? "NONE" : ability);
-        applySize(entity, size == null ? 0 : size);
+        setScale(entity, scale == null ? 1.0 : scale);
         setYaw(entity, yaw == null ? entity.getLocation().getYaw() : yaw);
     }
 
@@ -289,36 +282,26 @@ public final class CustomMobEditorManager implements Listener {
         editingTargets.put(player.getUniqueId(), entity.getUniqueId());
         Inventory inventory = Bukkit.createInventory(null, 36, GUI_TITLE);
         inventory.setItem(10, menuItem(Material.NAME_TAG, "§e이름", List.of(
-                "§7현재: §f" + displayName(entity),
-                "§a클릭 후 채팅으로 입력"
-        )));
+                "§7현재: §f" + displayName(entity), "§a클릭 후 채팅으로 입력")));
         inventory.setItem(12, menuItem(Material.RED_DYE, "§c체력: §f" + format(getHealth(entity)), List.of(
-                "§a좌클릭 §7+1", "§c우클릭 §7-1", "§eShift 클릭 §7±10"
-        )));
+                "§a좌클릭 §7+1", "§c우클릭 §7-1", "§eShift 클릭 §7±10")));
         inventory.setItem(14, menuItem(Material.IRON_SWORD, "§6공격력: §f" + format(getDamage(entity)), List.of(
-                "§a좌클릭 §7+1", "§c우클릭 §7-1", "§eShift 클릭 §7±10"
-        )));
+                "§a좌클릭 §7+1", "§c우클릭 §7-1", "§eShift 클릭 §7±10")));
         inventory.setItem(16, menuItem(isAggressive(entity) ? Material.LIME_DYE : Material.GRAY_DYE,
-                "§e공격 여부: " + (isAggressive(entity) ? "§aON" : "§cOFF"),
-                List.of("§7실제 던전 생성 시 공격 여부", "§a클릭하여 전환")));
-        inventory.setItem(18, menuItem(Material.COMPASS, "§b바라보는 방향: §f" + directionDescription(getYaw(entity)), List.of(
+                "§e공격 여부: " + (isAggressive(entity) ? "§aON" : "§cOFF"), List.of("§a클릭하여 전환")));
+        inventory.setItem(18, menuItem(Material.COMPASS, "§b방향: §f" + directionDescription(getYaw(entity)), List.of(
                 "§a좌클릭 §7왼쪽 15°", "§c우클릭 §7오른쪽 15°",
-                "§eShift+좌클릭 §7왼쪽 90°", "§eShift+우클릭 §7오른쪽 90°"
-        )));
-        inventory.setItem(20, menuItem(Material.SLIME_BALL, "§a크기: §f" + sizeDescription(entity), List.of(
-                "§7슬라임: 1~8 / 팬텀: 0~64", "§7좀비·동물: 성체/아기", "§7갑옷 거치대: 일반/소형",
-                "§a좌클릭 §7크게/다음", "§c우클릭 §7작게/이전"
-        )));
+                "§eShift+좌클릭 §7왼쪽 90°", "§eShift+우클릭 §7오른쪽 90°")));
+        inventory.setItem(20, menuItem(Material.SLIME_BALL, "§a크기 배율: §f" + format(getScale(entity)) + "배", List.of(
+                "§7범위: 0.25배~4.0배", "§a좌클릭 §7+0.1", "§c우클릭 §7-0.1",
+                "§eShift+좌클릭 §7+0.5", "§eShift+우클릭 §7-0.5")));
         inventory.setItem(22, menuItem(Material.BLAZE_POWDER, "§d특수 능력: §f" + getAbility(entity), List.of(
-                "§a좌클릭 §7다음 능력", "§c우클릭 §7이전 능력"
-        )));
+                "§a좌클릭 §7다음", "§c우클릭 §7이전")));
         inventory.setItem(24, menuItem(Material.BLAZE_ROD, "§6배치 도구 받기", List.of(
-                "§7현재 설정과 방향이 담긴 배치 도구 지급"
-        )));
+                "§7현재 설정·배율·방향을 저장합니다.")));
         inventory.setItem(26, menuItem(Material.ENDER_EYE, "§3내가 보는 방향으로 맞추기", List.of(
-                "§7현재 플레이어가 보는 수평 방향으로 몹을 회전"
-        )));
-        inventory.setItem(31, menuItem(Material.BARRIER, "§c프리뷰 몬스터 삭제", List.of("§7클릭하면 즉시 삭제됩니다.")));
+                "§7플레이어의 수평 방향으로 회전")));
+        inventory.setItem(31, menuItem(Material.BARRIER, "§c프리뷰 몬스터 삭제", List.of("§7클릭하면 삭제됩니다.")));
         player.openInventory(inventory);
     }
 
@@ -330,19 +313,18 @@ public final class CustomMobEditorManager implements Listener {
                 "§7블록을 우클릭하면 같은 프리뷰 몬스터를 배치합니다.",
                 "§8종류: " + entity.getType().name(),
                 "§8체력: " + format(getHealth(entity)) + " / 공격력: " + format(getDamage(entity)),
-                "§8방향: " + directionDescription(getYaw(entity))
-        ));
-        meta.addEnchant(org.bukkit.enchantments.Enchantment.LUCK, 1, true);
-        meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+                "§8크기: " + format(getScale(entity)) + "배 / 방향: " + directionDescription(getYaw(entity))));
+        meta.setEnchantmentGlintOverride(true);
         PersistentDataContainer data = meta.getPersistentDataContainer();
         data.set(cloneToolKey, PersistentDataType.BYTE, (byte) 1);
         data.set(cloneTypeKey, PersistentDataType.STRING, entity.getType().name());
-        data.set(cloneNameKey, PersistentDataType.STRING, entity.getCustomName() == null ? displayName(entity) : entity.getCustomName());
+        data.set(cloneNameKey, PersistentDataType.STRING,
+                entity.getCustomName() == null ? displayName(entity) : entity.getCustomName());
         data.set(cloneHealthKey, PersistentDataType.DOUBLE, getHealth(entity));
         data.set(cloneDamageKey, PersistentDataType.DOUBLE, getDamage(entity));
         data.set(cloneAggressiveKey, PersistentDataType.BYTE, isAggressive(entity) ? (byte) 1 : (byte) 0);
         data.set(cloneAbilityKey, PersistentDataType.STRING, getAbility(entity));
-        data.set(cloneSizeKey, PersistentDataType.INTEGER, currentSize(entity));
+        data.set(cloneScaleKey, PersistentDataType.DOUBLE, getScale(entity));
         data.set(cloneYawKey, PersistentDataType.FLOAT, getYaw(entity));
         tool.setItemMeta(meta);
         return tool;
@@ -358,14 +340,14 @@ public final class CustomMobEditorManager implements Listener {
     }
 
     private boolean isPreview(LivingEntity entity) {
-        Byte value = entity.getPersistentDataContainer().get(previewKey, PersistentDataType.BYTE);
-        return value != null && value == (byte) 1;
+        return entity.getPersistentDataContainer().getOrDefault(
+                previewKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
 
     private boolean isCloneTool(ItemStack item) {
         if (item.getType() != Material.BLAZE_ROD || !item.hasItemMeta()) return false;
-        Byte value = item.getItemMeta().getPersistentDataContainer().get(cloneToolKey, PersistentDataType.BYTE);
-        return value != null && value == (byte) 1;
+        return item.getItemMeta().getPersistentDataContainer().getOrDefault(
+                cloneToolKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
 
     private double getHealth(LivingEntity entity) {
@@ -373,10 +355,10 @@ public final class CustomMobEditorManager implements Listener {
     }
 
     private void setHealth(LivingEntity entity, double value) {
-        entity.getPersistentDataContainer().set(healthKey, PersistentDataType.DOUBLE, value);
-        AttributeInstance attribute = entity.getAttribute(Attribute.GENERIC_MAX_HEALTH);
-        if (attribute != null) attribute.setBaseValue(value);
-        entity.setHealth(Math.min(value, currentMaxHealth(entity)));
+        double safe = clamp(value, 1.0, 2048.0);
+        entity.getPersistentDataContainer().set(healthKey, PersistentDataType.DOUBLE, safe);
+        setAttribute(entity, Attribute.MAX_HEALTH, safe);
+        entity.setHealth(Math.min(safe, currentAttribute(entity, Attribute.MAX_HEALTH, safe)));
     }
 
     private double getDamage(LivingEntity entity) {
@@ -384,13 +366,25 @@ public final class CustomMobEditorManager implements Listener {
     }
 
     private void setDamage(LivingEntity entity, double value) {
-        entity.getPersistentDataContainer().set(damageKey, PersistentDataType.DOUBLE, value);
-        AttributeInstance attribute = entity.getAttribute(Attribute.GENERIC_ATTACK_DAMAGE);
-        if (attribute != null) attribute.setBaseValue(value);
+        double safe = clamp(value, 0.0, 1024.0);
+        entity.getPersistentDataContainer().set(damageKey, PersistentDataType.DOUBLE, safe);
+        setAttribute(entity, Attribute.ATTACK_DAMAGE, safe);
+    }
+
+    private double getScale(LivingEntity entity) {
+        return entity.getPersistentDataContainer().getOrDefault(scaleKey, PersistentDataType.DOUBLE,
+                currentAttribute(entity, Attribute.SCALE, 1.0));
+    }
+
+    private void setScale(LivingEntity entity, double value) {
+        double safe = Math.round(clamp(value, MIN_SCALE, MAX_SCALE) * 100.0) / 100.0;
+        entity.getPersistentDataContainer().set(scaleKey, PersistentDataType.DOUBLE, safe);
+        setAttribute(entity, Attribute.SCALE, safe);
     }
 
     private boolean isAggressive(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(aggressiveKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
+        return entity.getPersistentDataContainer().getOrDefault(
+                aggressiveKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
 
     private void setAggressive(LivingEntity entity, boolean value) {
@@ -401,19 +395,14 @@ public final class CustomMobEditorManager implements Listener {
         return entity.getPersistentDataContainer().getOrDefault(abilityKey, PersistentDataType.STRING, "NONE");
     }
 
-    private void setAbility(LivingEntity entity, String value) {
-        entity.getPersistentDataContainer().set(abilityKey, PersistentDataType.STRING, value);
+    private void setAbility(LivingEntity entity, String ability) {
+        entity.getPersistentDataContainer().set(abilityKey, PersistentDataType.STRING, ability);
     }
 
     private void cycleAbility(LivingEntity entity, int direction) {
         int index = ABILITIES.indexOf(getAbility(entity));
         if (index < 0) index = 0;
-        int next = Math.floorMod(index + direction, ABILITIES.size());
-        setAbility(entity, ABILITIES.get(next));
-    }
-
-    private void rotate(LivingEntity entity, float amount) {
-        setYaw(entity, getYaw(entity) + amount);
+        setAbility(entity, ABILITIES.get(Math.floorMod(index + direction, ABILITIES.size())));
     }
 
     private void setYaw(LivingEntity entity, float yaw) {
@@ -431,89 +420,31 @@ public final class CustomMobEditorManager implements Listener {
 
     private float normalizeYaw(float yaw) {
         float normalized = yaw % 360.0f;
-        if (normalized < 0.0f) normalized += 360.0f;
-        return normalized;
+        return normalized < 0.0f ? normalized + 360.0f : normalized;
     }
 
     private String directionDescription(float yaw) {
-        float normalized = normalizeYaw(yaw);
-        String cardinal;
-        if (normalized >= 337.5f || normalized < 22.5f) cardinal = "남쪽";
-        else if (normalized < 67.5f) cardinal = "남서쪽";
-        else if (normalized < 112.5f) cardinal = "서쪽";
-        else if (normalized < 157.5f) cardinal = "북서쪽";
-        else if (normalized < 202.5f) cardinal = "북쪽";
-        else if (normalized < 247.5f) cardinal = "북동쪽";
-        else if (normalized < 292.5f) cardinal = "동쪽";
-        else cardinal = "남동쪽";
-        return cardinal + " (" + Math.round(normalized) + "°)";
+        float value = normalizeYaw(yaw);
+        String direction;
+        if (value >= 337.5f || value < 22.5f) direction = "남쪽";
+        else if (value < 67.5f) direction = "남서쪽";
+        else if (value < 112.5f) direction = "서쪽";
+        else if (value < 157.5f) direction = "북서쪽";
+        else if (value < 202.5f) direction = "북쪽";
+        else if (value < 247.5f) direction = "북동쪽";
+        else if (value < 292.5f) direction = "동쪽";
+        else direction = "남동쪽";
+        return direction + " (" + Math.round(value) + "°)";
     }
 
-    private void cycleSize(LivingEntity entity, int direction) {
-        if (entity instanceof Slime slime) {
-            int next = Math.max(1, Math.min(8, slime.getSize() + direction));
-            applySize(entity, next);
-        } else if (entity instanceof Phantom phantom) {
-            int next = Math.max(0, Math.min(64, phantom.getSize() + direction));
-            applySize(entity, next);
-        } else if (entity instanceof Zombie zombie) {
-            applySize(entity, zombie.isBaby() ? 0 : 1);
-        } else if (entity instanceof Ageable ageable) {
-            applySize(entity, ageable.isAdult() ? 1 : 0);
-        } else if (entity instanceof ArmorStand armorStand) {
-            applySize(entity, armorStand.isSmall() ? 0 : 1);
-        }
+    private void setAttribute(LivingEntity entity, Attribute attribute, double value) {
+        AttributeInstance instance = entity.getAttribute(attribute);
+        if (instance != null) instance.setBaseValue(value);
     }
 
-    private void applySize(LivingEntity entity, int value) {
-        if (entity instanceof Slime slime) {
-            slime.setSize(Math.max(1, Math.min(8, value == 0 ? 1 : value)));
-            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, slime.getSize());
-        } else if (entity instanceof Phantom phantom) {
-            phantom.setSize(Math.max(0, Math.min(64, value)));
-            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, phantom.getSize());
-        } else if (entity instanceof Zombie zombie) {
-            zombie.setBaby(value == 1);
-            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, zombie.isBaby() ? 1 : 0);
-        } else if (entity instanceof Ageable ageable) {
-            if (value == 1) ageable.setBaby();
-            else ageable.setAdult();
-            ageable.setAgeLock(true);
-            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, value == 1 ? 1 : 0);
-        } else if (entity instanceof ArmorStand armorStand) {
-            armorStand.setSmall(value == 1);
-            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, armorStand.isSmall() ? 1 : 0);
-        } else {
-            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, 0);
-        }
-    }
-
-    private int currentSize(LivingEntity entity) {
-        if (entity instanceof Slime slime) return slime.getSize();
-        if (entity instanceof Phantom phantom) return phantom.getSize();
-        if (entity instanceof Zombie zombie) return zombie.isBaby() ? 1 : 0;
-        if (entity instanceof Ageable ageable) return ageable.isAdult() ? 0 : 1;
-        if (entity instanceof ArmorStand armorStand) return armorStand.isSmall() ? 1 : 0;
-        return entity.getPersistentDataContainer().getOrDefault(sizeKey, PersistentDataType.INTEGER, 0);
-    }
-
-    private String sizeDescription(LivingEntity entity) {
-        if (entity instanceof Slime slime) return "단계 " + slime.getSize() + "/8";
-        if (entity instanceof Phantom phantom) return "단계 " + phantom.getSize() + "/64";
-        if (entity instanceof Zombie zombie) return zombie.isBaby() ? "아기" : "성체";
-        if (entity instanceof Ageable ageable) return ageable.isAdult() ? "성체" : "아기";
-        if (entity instanceof ArmorStand armorStand) return armorStand.isSmall() ? "소형" : "일반";
-        return "기본 크기 (변경 불가)";
-    }
-
-    private double currentMaxHealth(LivingEntity entity) {
-        AttributeInstance attribute = entity.getAttribute(Attribute.GENERIC_MAX_HEALTH);
-        return attribute == null ? DEFAULT_HEALTH : attribute.getBaseValue();
-    }
-
-    private double currentAttackDamage(LivingEntity entity) {
-        AttributeInstance attribute = entity.getAttribute(Attribute.GENERIC_ATTACK_DAMAGE);
-        return attribute == null ? DEFAULT_DAMAGE : attribute.getBaseValue();
+    private double currentAttribute(LivingEntity entity, Attribute attribute, double fallback) {
+        AttributeInstance instance = entity.getAttribute(attribute);
+        return instance == null ? fallback : instance.getBaseValue();
     }
 
     private String displayName(LivingEntity entity) {
@@ -531,7 +462,13 @@ public final class CustomMobEditorManager implements Listener {
         return builder.toString();
     }
 
+    private double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
     private String format(double value) {
-        return value == Math.rint(value) ? Integer.toString((int) value) : String.format(Locale.US, "%.1f", value);
+        return value == Math.rint(value)
+                ? Integer.toString((int) value)
+                : String.format(Locale.US, "%.2f", value).replaceAll("0+$", "").replaceAll("\\.$", "");
     }
 }
