@@ -2,17 +2,20 @@ package kr.minq.dungeons;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.Ageable;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.MagmaCube;
+import org.bukkit.entity.Phantom;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Slime;
+import org.bukkit.entity.Zombie;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -48,6 +51,7 @@ public final class CustomMobEditorManager implements Listener {
     private final NamespacedKey aggressiveKey;
     private final NamespacedKey abilityKey;
     private final NamespacedKey sizeKey;
+    private final NamespacedKey yawKey;
     private final NamespacedKey cloneToolKey;
     private final NamespacedKey cloneTypeKey;
     private final NamespacedKey cloneNameKey;
@@ -56,6 +60,7 @@ public final class CustomMobEditorManager implements Listener {
     private final NamespacedKey cloneAggressiveKey;
     private final NamespacedKey cloneAbilityKey;
     private final NamespacedKey cloneSizeKey;
+    private final NamespacedKey cloneYawKey;
 
     private final Map<UUID, UUID> editingTargets = new HashMap<>();
     private final Map<UUID, UUID> awaitingName = new HashMap<>();
@@ -68,6 +73,7 @@ public final class CustomMobEditorManager implements Listener {
         aggressiveKey = new NamespacedKey(plugin, "custom_mob_aggressive");
         abilityKey = new NamespacedKey(plugin, "custom_mob_ability");
         sizeKey = new NamespacedKey(plugin, "custom_mob_size");
+        yawKey = new NamespacedKey(plugin, "custom_mob_yaw");
         cloneToolKey = new NamespacedKey(plugin, "custom_mob_clone_tool");
         cloneTypeKey = new NamespacedKey(plugin, "clone_type");
         cloneNameKey = new NamespacedKey(plugin, "clone_name");
@@ -76,6 +82,7 @@ public final class CustomMobEditorManager implements Listener {
         cloneAggressiveKey = new NamespacedKey(plugin, "clone_aggressive");
         cloneAbilityKey = new NamespacedKey(plugin, "clone_ability");
         cloneSizeKey = new NamespacedKey(plugin, "clone_size");
+        cloneYawKey = new NamespacedKey(plugin, "clone_yaw");
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -128,8 +135,10 @@ public final class CustomMobEditorManager implements Listener {
             return;
         }
 
-        Entity spawned = player.getWorld().spawnEntity(
-                event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0.0, 0.5), type);
+        Float yaw = data.get(cloneYawKey, PersistentDataType.FLOAT);
+        Location spawnLocation = event.getClickedBlock().getRelative(event.getBlockFace()).getLocation().add(0.5, 0.0, 0.5);
+        spawnLocation.setYaw(yaw == null ? player.getLocation().getYaw() : yaw);
+        Entity spawned = player.getWorld().spawnEntity(spawnLocation, type);
         if (!(spawned instanceof LivingEntity living)) {
             spawned.remove();
             return;
@@ -176,8 +185,13 @@ public final class CustomMobEditorManager implements Listener {
                 setAggressive(entity, !isAggressive(entity));
                 openEditor(player, entity);
             }
+            case 18 -> {
+                float step = shift ? 90.0f : 15.0f;
+                rotate(entity, right ? step : -step);
+                openEditor(player, entity);
+            }
             case 20 -> {
-                cycleSize(entity);
+                cycleSize(entity, right ? -1 : 1);
                 openEditor(player, entity);
             }
             case 22 -> {
@@ -187,6 +201,10 @@ public final class CustomMobEditorManager implements Listener {
             case 24 -> {
                 player.getInventory().addItem(createCloneTool(entity));
                 player.sendMessage("§a배치 도구를 지급했습니다.");
+            }
+            case 26 -> {
+                setYaw(entity, player.getLocation().getYaw());
+                openEditor(player, entity);
             }
             case 31 -> {
                 editingTargets.remove(player.getUniqueId());
@@ -242,6 +260,7 @@ public final class CustomMobEditorManager implements Listener {
             setAggressive(entity, false);
             setAbility(entity, "NONE");
             data.set(sizeKey, PersistentDataType.INTEGER, currentSize(entity));
+            setYaw(entity, entity.getLocation().getYaw());
             entity.setCustomName("§c" + prettyEntityName(entity.getType()));
             entity.setCustomNameVisible(true);
             return;
@@ -254,6 +273,7 @@ public final class CustomMobEditorManager implements Listener {
         Byte aggressive = source.get(cloneAggressiveKey, PersistentDataType.BYTE);
         String ability = source.get(cloneAbilityKey, PersistentDataType.STRING);
         Integer size = source.get(cloneSizeKey, PersistentDataType.INTEGER);
+        Float yaw = source.get(cloneYawKey, PersistentDataType.FLOAT);
 
         entity.setCustomName(name == null ? "§c" + prettyEntityName(entity.getType()) : name);
         entity.setCustomNameVisible(true);
@@ -262,6 +282,7 @@ public final class CustomMobEditorManager implements Listener {
         setAggressive(entity, aggressive != null && aggressive == (byte) 1);
         setAbility(entity, ability == null ? "NONE" : ability);
         applySize(entity, size == null ? 0 : size);
+        setYaw(entity, yaw == null ? entity.getLocation().getYaw() : yaw);
     }
 
     private void openEditor(Player player, LivingEntity entity) {
@@ -280,14 +301,22 @@ public final class CustomMobEditorManager implements Listener {
         inventory.setItem(16, menuItem(isAggressive(entity) ? Material.LIME_DYE : Material.GRAY_DYE,
                 "§e공격 여부: " + (isAggressive(entity) ? "§aON" : "§cOFF"),
                 List.of("§7실제 던전 생성 시 공격 여부", "§a클릭하여 전환")));
+        inventory.setItem(18, menuItem(Material.COMPASS, "§b바라보는 방향: §f" + directionDescription(getYaw(entity)), List.of(
+                "§a좌클릭 §7왼쪽 15°", "§c우클릭 §7오른쪽 15°",
+                "§eShift+좌클릭 §7왼쪽 90°", "§eShift+우클릭 §7오른쪽 90°"
+        )));
         inventory.setItem(20, menuItem(Material.SLIME_BALL, "§a크기: §f" + sizeDescription(entity), List.of(
-                "§7슬라임/마그마 큐브는 크기 단계", "§7동물·일부 몹은 성체/아기", "§a클릭하여 전환"
+                "§7슬라임: 1~8 / 팬텀: 0~64", "§7좀비·동물: 성체/아기", "§7갑옷 거치대: 일반/소형",
+                "§a좌클릭 §7크게/다음", "§c우클릭 §7작게/이전"
         )));
         inventory.setItem(22, menuItem(Material.BLAZE_POWDER, "§d특수 능력: §f" + getAbility(entity), List.of(
                 "§a좌클릭 §7다음 능력", "§c우클릭 §7이전 능력"
         )));
         inventory.setItem(24, menuItem(Material.BLAZE_ROD, "§6배치 도구 받기", List.of(
-                "§7현재 설정이 담긴 인챈트 블레이즈 막대기 지급"
+                "§7현재 설정과 방향이 담긴 배치 도구 지급"
+        )));
+        inventory.setItem(26, menuItem(Material.ENDER_EYE, "§3내가 보는 방향으로 맞추기", List.of(
+                "§7현재 플레이어가 보는 수평 방향으로 몹을 회전"
         )));
         inventory.setItem(31, menuItem(Material.BARRIER, "§c프리뷰 몬스터 삭제", List.of("§7클릭하면 즉시 삭제됩니다.")));
         player.openInventory(inventory);
@@ -300,7 +329,8 @@ public final class CustomMobEditorManager implements Listener {
         meta.setLore(List.of(
                 "§7블록을 우클릭하면 같은 프리뷰 몬스터를 배치합니다.",
                 "§8종류: " + entity.getType().name(),
-                "§8체력: " + format(getHealth(entity)) + " / 공격력: " + format(getDamage(entity))
+                "§8체력: " + format(getHealth(entity)) + " / 공격력: " + format(getDamage(entity)),
+                "§8방향: " + directionDescription(getYaw(entity))
         ));
         meta.addEnchant(org.bukkit.enchantments.Enchantment.LUCK, 1, true);
         meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
@@ -313,6 +343,7 @@ public final class CustomMobEditorManager implements Listener {
         data.set(cloneAggressiveKey, PersistentDataType.BYTE, isAggressive(entity) ? (byte) 1 : (byte) 0);
         data.set(cloneAbilityKey, PersistentDataType.STRING, getAbility(entity));
         data.set(cloneSizeKey, PersistentDataType.INTEGER, currentSize(entity));
+        data.set(cloneYawKey, PersistentDataType.FLOAT, getYaw(entity));
         tool.setItemMeta(meta);
         return tool;
     }
@@ -381,12 +412,56 @@ public final class CustomMobEditorManager implements Listener {
         setAbility(entity, ABILITIES.get(next));
     }
 
-    private void cycleSize(LivingEntity entity) {
+    private void rotate(LivingEntity entity, float amount) {
+        setYaw(entity, getYaw(entity) + amount);
+    }
+
+    private void setYaw(LivingEntity entity, float yaw) {
+        float normalized = normalizeYaw(yaw);
+        Location location = entity.getLocation();
+        location.setYaw(normalized);
+        entity.teleport(location);
+        entity.getPersistentDataContainer().set(yawKey, PersistentDataType.FLOAT, normalized);
+    }
+
+    private float getYaw(LivingEntity entity) {
+        return entity.getPersistentDataContainer().getOrDefault(
+                yawKey, PersistentDataType.FLOAT, normalizeYaw(entity.getLocation().getYaw()));
+    }
+
+    private float normalizeYaw(float yaw) {
+        float normalized = yaw % 360.0f;
+        if (normalized < 0.0f) normalized += 360.0f;
+        return normalized;
+    }
+
+    private String directionDescription(float yaw) {
+        float normalized = normalizeYaw(yaw);
+        String cardinal;
+        if (normalized >= 337.5f || normalized < 22.5f) cardinal = "남쪽";
+        else if (normalized < 67.5f) cardinal = "남서쪽";
+        else if (normalized < 112.5f) cardinal = "서쪽";
+        else if (normalized < 157.5f) cardinal = "북서쪽";
+        else if (normalized < 202.5f) cardinal = "북쪽";
+        else if (normalized < 247.5f) cardinal = "북동쪽";
+        else if (normalized < 292.5f) cardinal = "동쪽";
+        else cardinal = "남동쪽";
+        return cardinal + " (" + Math.round(normalized) + "°)";
+    }
+
+    private void cycleSize(LivingEntity entity, int direction) {
         if (entity instanceof Slime slime) {
-            int next = slime.getSize() >= 8 ? 1 : slime.getSize() + 1;
+            int next = Math.max(1, Math.min(8, slime.getSize() + direction));
             applySize(entity, next);
+        } else if (entity instanceof Phantom phantom) {
+            int next = Math.max(0, Math.min(64, phantom.getSize() + direction));
+            applySize(entity, next);
+        } else if (entity instanceof Zombie zombie) {
+            applySize(entity, zombie.isBaby() ? 0 : 1);
         } else if (entity instanceof Ageable ageable) {
             applySize(entity, ageable.isAdult() ? 1 : 0);
+        } else if (entity instanceof ArmorStand armorStand) {
+            applySize(entity, armorStand.isSmall() ? 0 : 1);
         }
     }
 
@@ -394,11 +469,20 @@ public final class CustomMobEditorManager implements Listener {
         if (entity instanceof Slime slime) {
             slime.setSize(Math.max(1, Math.min(8, value == 0 ? 1 : value)));
             entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, slime.getSize());
+        } else if (entity instanceof Phantom phantom) {
+            phantom.setSize(Math.max(0, Math.min(64, value)));
+            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, phantom.getSize());
+        } else if (entity instanceof Zombie zombie) {
+            zombie.setBaby(value == 1);
+            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, zombie.isBaby() ? 1 : 0);
         } else if (entity instanceof Ageable ageable) {
             if (value == 1) ageable.setBaby();
             else ageable.setAdult();
             ageable.setAgeLock(true);
             entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, value == 1 ? 1 : 0);
+        } else if (entity instanceof ArmorStand armorStand) {
+            armorStand.setSmall(value == 1);
+            entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, armorStand.isSmall() ? 1 : 0);
         } else {
             entity.getPersistentDataContainer().set(sizeKey, PersistentDataType.INTEGER, 0);
         }
@@ -406,14 +490,20 @@ public final class CustomMobEditorManager implements Listener {
 
     private int currentSize(LivingEntity entity) {
         if (entity instanceof Slime slime) return slime.getSize();
+        if (entity instanceof Phantom phantom) return phantom.getSize();
+        if (entity instanceof Zombie zombie) return zombie.isBaby() ? 1 : 0;
         if (entity instanceof Ageable ageable) return ageable.isAdult() ? 0 : 1;
+        if (entity instanceof ArmorStand armorStand) return armorStand.isSmall() ? 1 : 0;
         return entity.getPersistentDataContainer().getOrDefault(sizeKey, PersistentDataType.INTEGER, 0);
     }
 
     private String sizeDescription(LivingEntity entity) {
-        if (entity instanceof Slime slime) return "단계 " + slime.getSize();
+        if (entity instanceof Slime slime) return "단계 " + slime.getSize() + "/8";
+        if (entity instanceof Phantom phantom) return "단계 " + phantom.getSize() + "/64";
+        if (entity instanceof Zombie zombie) return zombie.isBaby() ? "아기" : "성체";
         if (entity instanceof Ageable ageable) return ageable.isAdult() ? "성체" : "아기";
-        return "기본 크기";
+        if (entity instanceof ArmorStand armorStand) return armorStand.isSmall() ? "소형" : "일반";
+        return "기본 크기 (변경 불가)";
     }
 
     private double currentMaxHealth(LivingEntity entity) {
