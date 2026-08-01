@@ -1,0 +1,14 @@
+name: Dungeons
+version: ${version}
+main: kr.minq.dungeons.DungeonsPlugin
+api-version: '1.20'
+author: LonelyDawnStar
+description: Dungeon RPG and adaptive monster hunting plugin for Paper 1.20.1
+commands:
+  dungeon:
+    aliases: [dg]
+    description: Dungeons main command
+    usage: /dungeon <help|start|stop|status>
+permissions:
+  dungeons.admin:
+    default: op
