@@ -17,6 +17,7 @@ public final class DungeonsPlugin extends JavaPlugin {
     private TemplateWorldManager templateWorldManager;
     private CustomMobEditorManager customMobEditorManager;
     private EquipmentDropEditorManager equipmentDropEditorManager;
+    private RoleSettingsManager roleSettingsManager;
     private MobTestToolManager mobTestToolManager;
 
     @Override
@@ -25,15 +26,17 @@ public final class DungeonsPlugin extends JavaPlugin {
         dungeonManager = new TestDungeonManager(this);
         templateWorldManager = new TemplateWorldManager(this);
         equipmentDropEditorManager = new EquipmentDropEditorManager(this);
-        customMobEditorManager = new CustomMobEditorManager(this, equipmentDropEditorManager);
+        roleSettingsManager = new RoleSettingsManager(this);
+        customMobEditorManager = new CustomMobEditorManager(this, equipmentDropEditorManager, roleSettingsManager);
         mobTestToolManager = new MobTestToolManager(this);
 
         Bukkit.getPluginManager().registerEvents(dungeonManager, this);
         Bukkit.getPluginManager().registerEvents(templateWorldManager, this);
         Bukkit.getPluginManager().registerEvents(equipmentDropEditorManager, this);
+        Bukkit.getPluginManager().registerEvents(roleSettingsManager, this);
         Bukkit.getPluginManager().registerEvents(customMobEditorManager, this);
         Bukkit.getPluginManager().registerEvents(mobTestToolManager, this);
-        getLogger().info("Dungeons 0.6.0 enabled for Paper 26.2");
+        getLogger().info("Dungeons role editor enabled for Paper 26.2");
     }
 
     @Override
@@ -44,10 +47,7 @@ public final class DungeonsPlugin extends JavaPlugin {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!command.getName().equalsIgnoreCase("dungeon")) return false;
-        if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
-            sendHelp(sender);
-            return true;
-        }
+        if (args.length == 0 || args[0].equalsIgnoreCase("help")) { sendHelp(sender); return true; }
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "party" -> handleParty(sender, args);
             case "templateworld" -> handleTemplateWorld(sender, args);
@@ -95,7 +95,7 @@ public final class DungeonsPlugin extends JavaPlugin {
         if (!player.hasPermission("dungeons.admin")) { player.sendMessage("§c관리자 권한이 필요합니다."); return; }
         if (args.length < 2) { player.sendMessage("§e/dungeon templateworld <create|enter|leave>"); return; }
         switch (args[1].toLowerCase(Locale.ROOT)) {
-            case "create" -> player.sendMessage(templateWorldManager.createOrLoadWorld() == null ? "§c템플릿 월드 생성에 실패했습니다." : "§6§l[Dungeons] §a템플릿 월드를 생성하거나 불러왔습니다.");
+            case "create" -> player.sendMessage(templateWorldManager.createOrLoadWorld() == null ? "§c템플릿 월드 생성 실패" : "§a템플릿 월드를 준비했습니다.");
             case "enter" -> player.sendMessage("§6§l[Dungeons] §f" + templateWorldManager.enter(player));
             case "leave" -> player.sendMessage("§6§l[Dungeons] §f" + templateWorldManager.leave(player));
             default -> player.sendMessage("§c알 수 없는 templateworld 명령어입니다.");
@@ -118,56 +118,45 @@ public final class DungeonsPlugin extends JavaPlugin {
 
     private void handleParty(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 사용할 수 있습니다."); return; }
-        if (args.length < 2) {
-            player.sendMessage("§6§l[Dungeons] §f파티: " + partyManager.describe(player));
-            player.sendMessage("§e/dungeon party <create|invite|accept|leave|list>");
-            return;
-        }
+        if (args.length < 2) { player.sendMessage("§6§l[Dungeons] §f파티: " + partyManager.describe(player)); return; }
         switch (args[1].toLowerCase(Locale.ROOT)) {
-            case "create" -> player.sendMessage(partyManager.createParty(player) ? "§6§l[Dungeons] §a파티를 생성했습니다." : "§6§l[Dungeons] §c이미 파티에 속해 있습니다.");
+            case "create" -> player.sendMessage(partyManager.createParty(player) ? "§a파티를 생성했습니다." : "§c이미 파티에 속해 있습니다.");
             case "invite" -> {
                 if (args.length < 3) { player.sendMessage("§c사용법: /dungeon party invite <닉네임>"); return; }
                 Player target = Bukkit.getPlayerExact(args[2]);
-                if (target == null) { player.sendMessage("§c접속 중인 플레이어를 찾을 수 없습니다."); return; }
-                player.sendMessage("§6§l[Dungeons] §f" + partyManager.invite(player, target));
+                player.sendMessage(target == null ? "§c플레이어를 찾을 수 없습니다." : partyManager.invite(player, target));
             }
-            case "accept" -> player.sendMessage("§6§l[Dungeons] §f" + partyManager.accept(player));
-            case "leave" -> {
-                if (dungeonManager.isRunning()) { player.sendMessage("§c던전 진행 중에는 파티를 나갈 수 없습니다."); return; }
-                player.sendMessage("§6§l[Dungeons] §f" + partyManager.leave(player));
-            }
-            case "list" -> player.sendMessage("§6§l[Dungeons] §f파티원: " + partyManager.describe(player));
+            case "accept" -> player.sendMessage(partyManager.accept(player));
+            case "leave" -> player.sendMessage(dungeonManager.isRunning() ? "§c던전 중에는 나갈 수 없습니다." : partyManager.leave(player));
+            case "list" -> player.sendMessage("§f파티원: " + partyManager.describe(player));
             default -> player.sendMessage("§c알 수 없는 파티 명령어입니다.");
         }
     }
 
     private void handleStart(CommandSender sender) {
-        if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 던전을 시작할 수 있습니다."); return; }
+        if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 사용할 수 있습니다."); return; }
         if (dungeonManager.isRunning()) { player.sendMessage("§c이미 던전이 진행 중입니다."); return; }
         PartyManager.Party party = partyManager.getParty(player);
         if (party == null) { partyManager.createParty(player); party = partyManager.getParty(player); }
-        if (!partyManager.isLeader(player)) { player.sendMessage("§c파티장만 던전을 시작할 수 있습니다."); return; }
-        player.sendMessage("§6§l[Dungeons] §f" + dungeonManager.start(partyManager.getOnlineMembers(party)));
+        if (!partyManager.isLeader(player)) { player.sendMessage("§c파티장만 시작할 수 있습니다."); return; }
+        player.sendMessage(dungeonManager.start(partyManager.getOnlineMembers(party)));
     }
 
     private void handleStop(CommandSender sender) {
-        if (!sender.hasPermission("dungeons.admin")) { sender.sendMessage("§c관리자만 강제로 종료할 수 있습니다."); return; }
-        sender.sendMessage("§6§l[Dungeons] §f" + dungeonManager.stop(false));
+        if (!sender.hasPermission("dungeons.admin")) { sender.sendMessage("§c관리자 권한이 필요합니다."); return; }
+        sender.sendMessage(dungeonManager.stop(false));
     }
 
     private void handleStatus(CommandSender sender) {
         sender.sendMessage("§6§l[Dungeons] §f현재 상태: " + (dungeonManager.isRunning() ? "§a진행 중" : "§7대기 중"));
-        if (sender instanceof Player player) sender.sendMessage("§6§l[Dungeons] §f파티: " + partyManager.describe(player));
+        if (sender instanceof Player player) sender.sendMessage("§f파티: " + partyManager.describe(player));
     }
 
     private void sendHelp(CommandSender sender) {
-        sender.sendMessage("§6§lDungeons 0.6.0 §7- Paper 26.2");
-        sender.sendMessage("§e생성 알 §7- 템플릿 월드에서 프리즈된 프리뷰 몹 생성");
-        sender.sendMessage("§e전용 막대기 §7- 몹 능력·장비·드롭 설정 GUI");
-        sender.sendMessage("§e전용 블레이즈 막대기 §7- 모든 설정을 포함한 몹 복제");
-        sender.sendMessage("§e전용 메아리 조각 §7- 몹 AI 테스트 시작/정지");
-        sender.sendMessage("§e/dungeon template wand §7- 템플릿 편집 도구 일괄 지급");
-        sender.sendMessage("§e/dungeon party §7- 파티 명령어");
-        sender.sendMessage("§e/dungeon start §7- 테스트 던전 시작");
+        sender.sendMessage("§6§lDungeons §7- Paper 26.2");
+        sender.sendMessage("§e전용 막대기 §7- 몹 기본·역할·장비·드롭 설정");
+        sender.sendMessage("§e거래인 §7- 우클릭 시 주민 거래 UI 사용");
+        sender.sendMessage("§e보상지급인 §7- 설정된 아이템 지급");
+        sender.sendMessage("§e/dungeon template wand §7- 편집 도구 일괄 지급");
     }
 }
