@@ -48,7 +48,9 @@ public final class CustomMobEditorManager implements Listener {
     private final NamespacedKey abilityKey;
     private final NamespacedKey scaleKey;
     private final NamespacedKey yawKey;
+    private final NamespacedKey editorToolKey;
     private final NamespacedKey cloneToolKey;
+    private final NamespacedKey deleteToolKey;
     private final NamespacedKey cloneTypeKey;
     private final NamespacedKey cloneNameKey;
     private final NamespacedKey cloneHealthKey;
@@ -70,7 +72,9 @@ public final class CustomMobEditorManager implements Listener {
         abilityKey = new NamespacedKey(plugin, "custom_mob_ability");
         scaleKey = new NamespacedKey(plugin, "custom_mob_scale");
         yawKey = new NamespacedKey(plugin, "custom_mob_yaw");
+        editorToolKey = new NamespacedKey(plugin, "custom_mob_editor_tool");
         cloneToolKey = new NamespacedKey(plugin, "custom_mob_clone_tool");
+        deleteToolKey = new NamespacedKey(plugin, "custom_mob_delete_tool");
         cloneTypeKey = new NamespacedKey(plugin, "clone_type");
         cloneNameKey = new NamespacedKey(plugin, "clone_name");
         cloneHealthKey = new NamespacedKey(plugin, "clone_health");
@@ -95,14 +99,25 @@ public final class CustomMobEditorManager implements Listener {
         if (!player.getWorld().getName().equals(TemplateWorldManager.WORLD_NAME)) return;
         if (!(event.getRightClicked() instanceof LivingEntity entity) || !isPreview(entity)) return;
 
-        Material held = player.getInventory().getItemInMainHand().getType();
-        if (held == Material.STICK) {
+        ItemStack held = player.getInventory().getItemInMainHand();
+        if (isEditorTool(held)) {
             event.setCancelled(true);
             openEditor(player, entity);
-        } else if (held == Material.BLAZE_ROD) {
+            return;
+        }
+        if (isCloneTool(held)) {
             event.setCancelled(true);
             player.getInventory().addItem(createCloneTool(entity));
-            player.sendMessage("§6§l[Dungeons] §a이 몬스터의 배치 도구를 지급했습니다.");
+            player.sendMessage("§6§l[Dungeons] §a현재 몬스터 설정이 담긴 배치 도구를 지급했습니다.");
+            return;
+        }
+        if (isDeleteTool(held)) {
+            event.setCancelled(true);
+            editingTargets.values().removeIf(entity.getUniqueId()::equals);
+            awaitingName.values().removeIf(entity.getUniqueId()::equals);
+            String name = displayName(entity);
+            entity.remove();
+            player.sendMessage("§6§l[Dungeons] §c" + name + "§c을(를) 즉시 삭제했습니다.");
         }
     }
 
@@ -120,7 +135,10 @@ public final class CustomMobEditorManager implements Listener {
         ItemStack tool = event.getItem();
         PersistentDataContainer data = tool.getItemMeta().getPersistentDataContainer();
         String typeName = data.get(cloneTypeKey, PersistentDataType.STRING);
-        if (typeName == null) return;
+        if (typeName == null) {
+            player.sendMessage("§e먼저 이 블레이즈 막대기로 프리뷰 몬스터를 우클릭해 설정을 복사하세요.");
+            return;
+        }
 
         EntityType type;
         try {
@@ -339,15 +357,27 @@ public final class CustomMobEditorManager implements Listener {
         return item;
     }
 
-    private boolean isPreview(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(
-                previewKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
+    private boolean hasToolKey(ItemStack item, Material material, NamespacedKey key) {
+        if (item == null || item.getType() != material || !item.hasItemMeta()) return false;
+        return item.getItemMeta().getPersistentDataContainer().getOrDefault(
+                key, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
+    }
+
+    private boolean isEditorTool(ItemStack item) {
+        return hasToolKey(item, Material.STICK, editorToolKey);
     }
 
     private boolean isCloneTool(ItemStack item) {
-        if (item.getType() != Material.BLAZE_ROD || !item.hasItemMeta()) return false;
-        return item.getItemMeta().getPersistentDataContainer().getOrDefault(
-                cloneToolKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
+        return hasToolKey(item, Material.BLAZE_ROD, cloneToolKey);
+    }
+
+    private boolean isDeleteTool(ItemStack item) {
+        return hasToolKey(item, Material.BREEZE_ROD, deleteToolKey);
+    }
+
+    private boolean isPreview(LivingEntity entity) {
+        return entity.getPersistentDataContainer().getOrDefault(
+                previewKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
 
     private double getHealth(LivingEntity entity) {
