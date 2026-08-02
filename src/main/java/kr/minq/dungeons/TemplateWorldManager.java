@@ -31,6 +31,7 @@ public final class TemplateWorldManager implements Listener {
     private final NamespacedKey editorToolKey;
     private final NamespacedKey cloneToolKey;
     private final NamespacedKey deleteToolKey;
+    private final NamespacedKey testToolKey;
     private final Map<UUID, Selection> selections = new HashMap<>();
     private final Map<UUID, Location> returnLocations = new HashMap<>();
 
@@ -39,6 +40,8 @@ public final class TemplateWorldManager implements Listener {
         editorToolKey = new NamespacedKey(plugin, "custom_mob_editor_tool");
         cloneToolKey = new NamespacedKey(plugin, "custom_mob_clone_tool");
         deleteToolKey = new NamespacedKey(plugin, "custom_mob_delete_tool");
+        testToolKey = new NamespacedKey(plugin, "custom_mob_test_tool");
+        Bukkit.getPluginManager().registerEvents(new MobTestToolManager(plugin), plugin);
     }
 
     public World createOrLoadWorld() {
@@ -109,9 +112,11 @@ public final class TemplateWorldManager implements Listener {
                 createTool(Material.BLAZE_ROD, "§6§l커스텀 몹 복제 막대기",
                         List.of("§7프리뷰 몹 우클릭: 설정 복사", "§7블록 우클릭: 복사한 몹 배치", "§8일반 블레이즈 막대기는 작동하지 않습니다."), cloneToolKey),
                 createTool(Material.BREEZE_ROD, "§b§l커스텀 몹 삭제 막대기",
-                        List.of("§7프리뷰 몹을 우클릭하면 즉시 삭제합니다.", "§c삭제 후 복구할 수 없습니다.", "§8일반 브리즈 막대기는 작동하지 않습니다."), deleteToolKey)
+                        List.of("§7프리뷰 몹을 우클릭하면 즉시 삭제합니다.", "§c삭제 후 복구할 수 없습니다.", "§8일반 브리즈 막대기는 작동하지 않습니다."), deleteToolKey),
+                createTool(Material.ECHO_SHARD, "§d§l커스텀 몹 테스트 조각",
+                        List.of("§7프리뷰 몹 우클릭: AI 테스트 시작", "§7다시 우클릭: 정지 상태로 복귀", "§8일반 메아리 조각은 작동하지 않습니다."), testToolKey)
         );
-        return "§a선택 도끼와 커스텀 몹 편집 도구 3종을 지급했습니다.";
+        return "§a선택 도끼와 커스텀 몹 편집 도구 4종을 지급했습니다.";
     }
 
     private ItemStack createTool(Material material, String name, List<String> lore, NamespacedKey key) {
