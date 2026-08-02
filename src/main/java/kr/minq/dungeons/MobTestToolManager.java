@@ -6,6 +6,9 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
@@ -27,23 +30,25 @@ import java.util.UUID;
 
 public final class MobTestToolManager implements Listener {
     private static final long TOGGLE_DEBOUNCE_MILLIS = 300L;
-    private static final long ATTACK_COOLDOWN_MILLIS = 1000L;
-    private static final double ATTACK_RANGE = 2.1;
+    private static final long ACTION_COOLDOWN_MILLIS = 1000L;
 
-    private final NamespacedKey previewKey;
-    private final NamespacedKey roleKey;
-    private final NamespacedKey rangeKey;
-    private final NamespacedKey testActiveKey;
-    private final NamespacedKey testToolKey;
+    private final NamespacedKey previewKey, roleKey, attackRangeKey, testActiveKey, testToolKey;
+    private final NamespacedKey bossBarKey, bossColorKey, allyModeKey, allyPowerKey, allyRangeKey;
     private final Map<UUID, Long> lastToggleAt = new HashMap<>();
-    private final Map<UUID, Long> lastAttackAt = new HashMap<>();
+    private final Map<UUID, Long> lastActionAt = new HashMap<>();
+    private final Map<UUID, BossBar> bossBars = new HashMap<>();
 
     public MobTestToolManager(JavaPlugin plugin) {
         previewKey = new NamespacedKey(plugin, "custom_mob_preview");
         roleKey = new NamespacedKey(plugin, "custom_mob_role");
-        rangeKey = new NamespacedKey(plugin, "custom_mob_range");
+        attackRangeKey = new NamespacedKey(plugin, "custom_mob_range");
         testActiveKey = new NamespacedKey(plugin, "custom_mob_test_active");
         testToolKey = new NamespacedKey(plugin, "custom_mob_test_tool");
+        bossBarKey = new NamespacedKey(plugin, "role_boss_bar");
+        bossColorKey = new NamespacedKey(plugin, "role_boss_color");
+        allyModeKey = new NamespacedKey(plugin, "role_ally_mode");
+        allyPowerKey = new NamespacedKey(plugin, "role_ally_power");
+        allyRangeKey = new NamespacedKey(plugin, "role_ally_range");
         Bukkit.getScheduler().runTaskTimer(plugin, this::tickTests, 5L, 5L);
     }
 
@@ -57,15 +62,14 @@ public final class MobTestToolManager implements Listener {
         if (!isTestTool(player.getInventory().getItemInMainHand())) return;
         event.setCancelled(true);
         long now = System.currentTimeMillis();
-        long previous = lastToggleAt.getOrDefault(player.getUniqueId(), 0L);
-        if (now - previous < TOGGLE_DEBOUNCE_MILLIS) return;
+        if (now - lastToggleAt.getOrDefault(player.getUniqueId(), 0L) < TOGGLE_DEBOUNCE_MILLIS) return;
         lastToggleAt.put(player.getUniqueId(), now);
         if (isTestActive(entity)) {
             freeze(entity);
-            player.sendMessage("§6§l[Dungeons] §b몬스터 테스트를 종료했습니다.");
+            player.sendMessage("§6§l[Dungeons] §b역할 테스트를 종료했습니다.");
         } else {
             activate(entity);
-            player.sendMessage("§6§l[Dungeons] §a" + roleKorean(getRole(entity)) + " 테스트를 시작했습니다.");
+            player.sendMessage("§6§l[Dungeons] §a" + roleKorean(role(entity)) + " 테스트를 시작했습니다.");
         }
     }
 
@@ -73,7 +77,7 @@ public final class MobTestToolManager implements Listener {
     public void onTarget(EntityTargetLivingEntityEvent event) {
         if (!(event.getEntity() instanceof LivingEntity entity)) return;
         if (!isPreview(entity) || !isTestActive(entity)) return;
-        if (!isHostileRole(entity)) {
+        if (!isHostile(entity)) {
             event.setCancelled(true);
             if (entity instanceof Mob mob) mob.setTarget(null);
         }
@@ -83,7 +87,8 @@ public final class MobTestToolManager implements Listener {
     public void onPreviewAttack(EntityDamageByEntityEvent event) {
         if (!(event.getDamager() instanceof LivingEntity attacker)) return;
         if (!isPreview(attacker) || !isTestActive(attacker)) return;
-        if (!isHostileRole(attacker)) event.setCancelled(true);
+        String role = role(attacker);
+        if (!role.equals("NORMAL") && !role.equals("BOSS") && !role.equals("ALLY")) event.setCancelled(true);
     }
 
     @EventHandler(ignoreCancelled = true)
@@ -101,36 +106,58 @@ public final class MobTestToolManager implements Listener {
         if (world == null) return;
         for (LivingEntity entity : world.getLivingEntities()) {
             if (!isPreview(entity) || !isTestActive(entity)) continue;
-            if (!isHostileRole(entity)) {
-                if (entity instanceof Mob mob) mob.setTarget(null);
-                continue;
-            }
-            Player target = nearestTarget(entity, getRange(entity));
-            if (target == null) {
-                if (entity instanceof Mob mob) mob.setTarget(null);
-                continue;
-            }
-            if (entity instanceof Mob mob) mob.setTarget(target);
-            double distanceSquared = entity.getLocation().distanceSquared(target.getLocation());
-            if (distanceSquared > ATTACK_RANGE * ATTACK_RANGE) {
-                Vector direction = target.getLocation().toVector().subtract(entity.getLocation().toVector());
-                direction.setY(0);
-                if (direction.lengthSquared() > 0.001) {
-                    direction.normalize().multiply(getRole(entity).equals("BOSS") ? 0.32 : 0.28);
-                    direction.setY(entity.getVelocity().getY());
-                    entity.setVelocity(direction);
+            switch (role(entity)) {
+                case "NORMAL", "BOSS" -> tickEnemy(entity);
+                case "ALLY" -> tickAlly(entity);
+                default -> {
+                    if (entity instanceof Mob mob) mob.setTarget(null);
+                    entity.setVelocity(new Vector());
                 }
-                continue;
             }
-            long now = System.currentTimeMillis();
-            long previous = lastAttackAt.getOrDefault(entity.getUniqueId(), 0L);
-            if (now - previous < ATTACK_COOLDOWN_MILLIS) continue;
-            lastAttackAt.put(entity.getUniqueId(), now);
-            target.damage(attackDamage(entity), entity);
+            updateBossBar(entity);
         }
     }
 
-    private Player nearestTarget(LivingEntity entity, double range) {
+    private void tickEnemy(LivingEntity entity) {
+        double hitRange = attackRange(entity);
+        double detectionRange = Math.max(16.0, hitRange + 12.0);
+        Player target = nearestPlayer(entity, detectionRange);
+        if (target == null) {
+            if (entity instanceof Mob mob) mob.setTarget(null);
+            return;
+        }
+        if (entity instanceof Mob mob) mob.setTarget(target);
+        if (entity.getLocation().distanceSquared(target.getLocation()) > hitRange * hitRange) {
+            moveToward(entity, target, role(entity).equals("BOSS") ? 0.34 : 0.28);
+            return;
+        }
+        if (!actionReady(entity)) return;
+        target.damage(attackDamage(entity), entity);
+    }
+
+    private void tickAlly(LivingEntity entity) {
+        String mode = entity.getPersistentDataContainer().getOrDefault(allyModeKey, PersistentDataType.STRING, "ATTACK");
+        double power = entity.getPersistentDataContainer().getOrDefault(allyPowerKey, PersistentDataType.DOUBLE, 4.0);
+        double range = entity.getPersistentDataContainer().getOrDefault(allyRangeKey, PersistentDataType.DOUBLE, 12.0);
+        if (mode.equals("HEAL")) {
+            Player player = nearestPlayer(entity, range);
+            if (player != null && player.getHealth() < maxHealth(player) && actionReady(entity)) {
+                player.setHealth(Math.min(maxHealth(player), player.getHealth() + power));
+                player.sendActionBar("§a조력자에게서 " + format(power) + "만큼 회복받았습니다.");
+            }
+            return;
+        }
+        LivingEntity target = nearestEnemy(entity, range);
+        if (target == null) return;
+        double hitRange = Math.min(3.0, range);
+        if (entity.getLocation().distanceSquared(target.getLocation()) > hitRange * hitRange) {
+            moveToward(entity, target, 0.3);
+            return;
+        }
+        if (actionReady(entity)) target.damage(power, entity);
+    }
+
+    private Player nearestPlayer(LivingEntity entity, double range) {
         Player nearest = null;
         double nearestDistance = range * range;
         for (Player player : entity.getWorld().getPlayers()) {
@@ -138,12 +165,37 @@ public final class MobTestToolManager implements Listener {
             if (mode != GameMode.SURVIVAL && mode != GameMode.ADVENTURE) continue;
             if (player.isDead() || !player.isValid()) continue;
             double distance = entity.getLocation().distanceSquared(player.getLocation());
-            if (distance < nearestDistance) {
-                nearestDistance = distance;
-                nearest = player;
-            }
+            if (distance < nearestDistance) { nearestDistance = distance; nearest = player; }
         }
         return nearest;
+    }
+
+    private LivingEntity nearestEnemy(LivingEntity ally, double range) {
+        LivingEntity nearest = null;
+        double nearestDistance = range * range;
+        for (LivingEntity other : ally.getWorld().getLivingEntities()) {
+            if (other.equals(ally) || !isPreview(other) || !isTestActive(other) || !isHostile(other)) continue;
+            double distance = ally.getLocation().distanceSquared(other.getLocation());
+            if (distance < nearestDistance) { nearestDistance = distance; nearest = other; }
+        }
+        return nearest;
+    }
+
+    private void moveToward(LivingEntity entity, LivingEntity target, double speed) {
+        Vector direction = target.getLocation().toVector().subtract(entity.getLocation().toVector());
+        direction.setY(0.0);
+        if (direction.lengthSquared() > 0.001) {
+            direction.normalize().multiply(speed);
+            direction.setY(entity.getVelocity().getY());
+            entity.setVelocity(direction);
+        }
+    }
+
+    private boolean actionReady(LivingEntity entity) {
+        long now = System.currentTimeMillis();
+        if (now - lastActionAt.getOrDefault(entity.getUniqueId(), 0L) < ACTION_COOLDOWN_MILLIS) return false;
+        lastActionAt.put(entity.getUniqueId(), now);
+        return true;
     }
 
     private void activate(LivingEntity entity) {
@@ -151,12 +203,14 @@ public final class MobTestToolManager implements Listener {
         entity.setInvulnerable(false);
         entity.setSilent(false);
         entity.setAI(true);
-        if (!isHostileRole(entity) && entity instanceof Mob mob) mob.setTarget(null);
+        if (role(entity).equals("BOSS")) createBossBar(entity);
+        if (!isHostile(entity) && entity instanceof Mob mob) mob.setTarget(null);
     }
 
     private void freeze(LivingEntity entity) {
         entity.getPersistentDataContainer().set(testActiveKey, PersistentDataType.BYTE, (byte) 0);
-        lastAttackAt.remove(entity.getUniqueId());
+        lastActionAt.remove(entity.getUniqueId());
+        removeBossBar(entity);
         if (entity instanceof Mob mob) mob.setTarget(null);
         entity.setAI(false);
         entity.setInvulnerable(true);
@@ -166,49 +220,34 @@ public final class MobTestToolManager implements Listener {
         entity.setHealth(maxHealth(entity));
     }
 
-    private String getRole(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(roleKey, PersistentDataType.STRING, "NORMAL");
+    private void createBossBar(LivingEntity entity) {
+        if (entity.getPersistentDataContainer().getOrDefault(bossBarKey, PersistentDataType.BYTE, (byte) 1) != (byte) 1) return;
+        String colorName = entity.getPersistentDataContainer().getOrDefault(bossColorKey, PersistentDataType.STRING, "RED");
+        BarColor color;
+        try { color = BarColor.valueOf(colorName); } catch (IllegalArgumentException ex) { color = BarColor.RED; }
+        BossBar bar = Bukkit.createBossBar(entity.getCustomName() == null ? "보스" : entity.getCustomName(), color, BarStyle.SEGMENTED_10);
+        for (Player player : entity.getWorld().getPlayers()) bar.addPlayer(player);
+        bossBars.put(entity.getUniqueId(), bar);
     }
 
-    private boolean isHostileRole(LivingEntity entity) {
-        String role = getRole(entity);
-        return role.equals("NORMAL") || role.equals("BOSS");
+    private void updateBossBar(LivingEntity entity) {
+        BossBar bar = bossBars.get(entity.getUniqueId());
+        if (bar != null) bar.setProgress(Math.max(0.0, Math.min(1.0, entity.getHealth() / maxHealth(entity))));
     }
 
-    private double getRange(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(rangeKey, PersistentDataType.DOUBLE, 24.0);
+    private void removeBossBar(LivingEntity entity) {
+        BossBar bar = bossBars.remove(entity.getUniqueId());
+        if (bar != null) bar.removeAll();
     }
 
-    private String roleKorean(String role) {
-        return switch (role) {
-            case "BOSS" -> "보스몹";
-            case "TRADER" -> "거래인";
-            case "REWARD" -> "보상지급인";
-            case "ALLY" -> "조력자";
-            default -> "일반몹";
-        };
-    }
-
-    private double maxHealth(LivingEntity entity) {
-        AttributeInstance attribute = entity.getAttribute(Attribute.MAX_HEALTH);
-        return attribute == null ? Math.max(1.0, entity.getHealth()) : Math.max(1.0, attribute.getValue());
-    }
-
-    private double attackDamage(LivingEntity entity) {
-        AttributeInstance attribute = entity.getAttribute(Attribute.ATTACK_DAMAGE);
-        return attribute == null ? 2.0 : Math.max(0.0, attribute.getValue());
-    }
-
-    private boolean isPreview(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(previewKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
-    }
-
-    private boolean isTestActive(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(testActiveKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
-    }
-
-    private boolean isTestTool(ItemStack item) {
-        if (item == null || item.getType() != Material.ECHO_SHARD || !item.hasItemMeta()) return false;
-        return item.getItemMeta().getPersistentDataContainer().getOrDefault(testToolKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
-    }
+    private double maxHealth(LivingEntity entity) { AttributeInstance attribute = entity.getAttribute(Attribute.MAX_HEALTH); return attribute == null ? Math.max(1.0, entity.getHealth()) : Math.max(1.0, attribute.getValue()); }
+    private double attackDamage(LivingEntity entity) { AttributeInstance attribute = entity.getAttribute(Attribute.ATTACK_DAMAGE); return attribute == null ? 2.0 : Math.max(0.0, attribute.getValue()); }
+    private double attackRange(LivingEntity entity) { return entity.getPersistentDataContainer().getOrDefault(attackRangeKey, PersistentDataType.DOUBLE, 2.1); }
+    private String role(LivingEntity entity) { return entity.getPersistentDataContainer().getOrDefault(roleKey, PersistentDataType.STRING, "NORMAL"); }
+    private boolean isHostile(LivingEntity entity) { String role = role(entity); return role.equals("NORMAL") || role.equals("BOSS"); }
+    private boolean isPreview(LivingEntity entity) { return entity.getPersistentDataContainer().getOrDefault(previewKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1; }
+    private boolean isTestActive(LivingEntity entity) { return entity.getPersistentDataContainer().getOrDefault(testActiveKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1; }
+    private boolean isTestTool(ItemStack item) { return item != null && item.getType() == Material.ECHO_SHARD && item.hasItemMeta() && item.getItemMeta().getPersistentDataContainer().getOrDefault(testToolKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1; }
+    private String roleKorean(String role) { return switch (role) { case "BOSS" -> "보스몹"; case "TRADER" -> "거래인"; case "REWARD" -> "보상지급인"; case "ALLY" -> "조력자"; default -> "일반몹"; }; }
+    private String format(double value) { return value == Math.rint(value) ? Integer.toString((int) value) : String.format(java.util.Locale.US, "%.1f", value); }
 }
