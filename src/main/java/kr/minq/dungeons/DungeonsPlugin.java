@@ -33,8 +33,8 @@ public final class DungeonsPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(dungeonManager, this);
         Bukkit.getPluginManager().registerEvents(templateWorldManager, this);
         Bukkit.getPluginManager().registerEvents(equipmentDropEditorManager, this);
-        Bukkit.getPluginManager().registerEvents(roleSettingsManager, this);
         Bukkit.getPluginManager().registerEvents(customMobEditorManager, this);
+        Bukkit.getPluginManager().registerEvents(roleSettingsManager, this);
         Bukkit.getPluginManager().registerEvents(mobTestToolManager, this);
         getLogger().info("Dungeons role editor enabled for Paper 26.2");
     }
