@@ -20,20 +20,25 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 public final class TemplateWorldManager implements Listener {
     public static final String WORLD_NAME = "dungeon_templates";
 
-    private final JavaPlugin plugin;
     private final NamespacedKey wandKey;
+    private final NamespacedKey editorToolKey;
+    private final NamespacedKey cloneToolKey;
+    private final NamespacedKey deleteToolKey;
     private final Map<UUID, Selection> selections = new HashMap<>();
     private final Map<UUID, Location> returnLocations = new HashMap<>();
 
     public TemplateWorldManager(JavaPlugin plugin) {
-        this.plugin = plugin;
-        this.wandKey = new NamespacedKey(plugin, "template_wand");
+        wandKey = new NamespacedKey(plugin, "template_wand");
+        editorToolKey = new NamespacedKey(plugin, "custom_mob_editor_tool");
+        cloneToolKey = new NamespacedKey(plugin, "custom_mob_clone_tool");
+        deleteToolKey = new NamespacedKey(plugin, "custom_mob_delete_tool");
     }
 
     public World createOrLoadWorld() {
@@ -69,14 +74,12 @@ public final class TemplateWorldManager implements Listener {
 
     public String enter(Player player) {
         World world = createOrLoadWorld();
-        if (world == null) {
-            return "§c템플릿 월드를 생성하지 못했습니다.";
-        }
+        if (world == null) return "§c템플릿 월드를 생성하지 못했습니다.";
         if (!player.getWorld().getName().equals(WORLD_NAME)) {
             returnLocations.put(player.getUniqueId(), player.getLocation().clone());
         }
         player.teleport(world.getSpawnLocation().clone().add(0.5, 1.0, 0.5));
-        player.sendTitle("§6템플릿 월드", "§f방을 건축하고 선택 도끼로 영역을 지정하세요", 10, 60, 20);
+        player.sendTitle("§6템플릿 월드", "§f방과 몬스터를 제작하세요", 10, 60, 20);
         return "§a템플릿 월드로 이동했습니다.";
     }
 
@@ -85,11 +88,8 @@ public final class TemplateWorldManager implements Listener {
         if (destination == null || destination.getWorld() == null) {
             World fallback = Bukkit.getWorlds().stream()
                     .filter(world -> !world.getName().equals(WORLD_NAME))
-                    .findFirst()
-                    .orElse(null);
-            if (fallback == null) {
-                return "§c돌아갈 월드를 찾지 못했습니다.";
-            }
+                    .findFirst().orElse(null);
+            if (fallback == null) return "§c돌아갈 월드를 찾지 못했습니다.";
             destination = fallback.getSpawnLocation();
         }
         player.teleport(destination);
@@ -98,19 +98,31 @@ public final class TemplateWorldManager implements Listener {
 
     public String giveWand(Player player) {
         if (!player.getWorld().getName().equals(WORLD_NAME)) {
-            return "§c템플릿 월드 안에서만 선택 도끼를 받을 수 있습니다.";
+            return "§c템플릿 월드 안에서만 편집 도구를 받을 수 있습니다.";
         }
-        ItemStack wand = new ItemStack(Material.WOODEN_AXE);
-        ItemMeta meta = wand.getItemMeta();
-        meta.setDisplayName("§6§l던전 템플릿 선택 도끼");
-        meta.setLore(java.util.List.of(
-                "§e좌클릭 §7- 첫 번째 지점",
-                "§e우클릭 §7- 두 번째 지점"
-        ));
-        meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1);
-        wand.setItemMeta(meta);
-        player.getInventory().addItem(wand);
-        return "§a선택 도끼를 지급했습니다.";
+
+        player.getInventory().addItem(
+                createTool(Material.WOODEN_AXE, "§6§l던전 템플릿 선택 도끼",
+                        List.of("§e좌클릭 §7- 첫 번째 지점", "§e우클릭 §7- 두 번째 지점"), wandKey),
+                createTool(Material.STICK, "§e§l커스텀 몹 편집 막대기",
+                        List.of("§7프리뷰 몹을 우클릭하면 편집 GUI가 열립니다.", "§8일반 막대기는 작동하지 않습니다."), editorToolKey),
+                createTool(Material.BLAZE_ROD, "§6§l커스텀 몹 복제 막대기",
+                        List.of("§7프리뷰 몹 우클릭: 설정 복사", "§7블록 우클릭: 복사한 몹 배치", "§8일반 블레이즈 막대기는 작동하지 않습니다."), cloneToolKey),
+                createTool(Material.BREEZE_ROD, "§b§l커스텀 몹 삭제 막대기",
+                        List.of("§7프리뷰 몹을 우클릭하면 즉시 삭제합니다.", "§c삭제 후 복구할 수 없습니다.", "§8일반 브리즈 막대기는 작동하지 않습니다."), deleteToolKey)
+        );
+        return "§a선택 도끼와 커스텀 몹 편집 도구 3종을 지급했습니다.";
+    }
+
+    private ItemStack createTool(Material material, String name, List<String> lore, NamespacedKey key) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(name);
+        meta.setLore(lore);
+        meta.setEnchantmentGlintOverride(true);
+        meta.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
+        item.setItemMeta(meta);
+        return item;
     }
 
     public String setPosition(Player player, boolean first) {
@@ -139,8 +151,7 @@ public final class TemplateWorldManager implements Listener {
         long sizeY = maxY - minY + 1L;
         long sizeZ = maxZ - minZ + 1L;
         long volume = sizeX * sizeY * sizeZ;
-        return "§6§l[선택 영역] §f"
-                + "최소 " + minX + ", " + minY + ", " + minZ
+        return "§6§l[선택 영역] §f최소 " + minX + ", " + minY + ", " + minZ
                 + " §7/ §f최대 " + maxX + ", " + maxY + ", " + maxZ
                 + " §7/ §e크기 " + sizeX + "×" + sizeY + "×" + sizeZ
                 + " §7(" + volume + "블록)";
@@ -182,8 +193,8 @@ public final class TemplateWorldManager implements Listener {
 
     private boolean isWand(ItemStack item) {
         if (item.getType() != Material.WOODEN_AXE || !item.hasItemMeta()) return false;
-        Byte value = item.getItemMeta().getPersistentDataContainer().get(wandKey, PersistentDataType.BYTE);
-        return value != null && value == (byte) 1;
+        return item.getItemMeta().getPersistentDataContainer().getOrDefault(
+                wandKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
 
     private String describePosition(boolean first, Location location) {
@@ -203,16 +214,8 @@ public final class TemplateWorldManager implements Listener {
         private Location pos1;
         private Location pos2;
 
-        public Location getPos1() {
-            return pos1 == null ? null : pos1.clone();
-        }
-
-        public Location getPos2() {
-            return pos2 == null ? null : pos2.clone();
-        }
-
-        public boolean isComplete() {
-            return pos1 != null && pos2 != null;
-        }
+        public Location getPos1() { return pos1 == null ? null : pos1.clone(); }
+        public Location getPos2() { return pos2 == null ? null : pos2.clone(); }
+        public boolean isComplete() { return pos1 != null && pos2 != null; }
     }
 }
