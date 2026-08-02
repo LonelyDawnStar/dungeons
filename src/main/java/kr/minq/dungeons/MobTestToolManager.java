@@ -28,11 +28,11 @@ import java.util.UUID;
 public final class MobTestToolManager implements Listener {
     private static final long TOGGLE_DEBOUNCE_MILLIS = 300L;
     private static final long ATTACK_COOLDOWN_MILLIS = 1000L;
-    private static final double TARGET_RANGE = 24.0;
     private static final double ATTACK_RANGE = 2.1;
 
     private final NamespacedKey previewKey;
-    private final NamespacedKey aggressiveKey;
+    private final NamespacedKey roleKey;
+    private final NamespacedKey rangeKey;
     private final NamespacedKey testActiveKey;
     private final NamespacedKey testToolKey;
     private final Map<UUID, Long> lastToggleAt = new HashMap<>();
@@ -40,35 +40,32 @@ public final class MobTestToolManager implements Listener {
 
     public MobTestToolManager(JavaPlugin plugin) {
         previewKey = new NamespacedKey(plugin, "custom_mob_preview");
-        aggressiveKey = new NamespacedKey(plugin, "custom_mob_aggressive");
+        roleKey = new NamespacedKey(plugin, "custom_mob_role");
+        rangeKey = new NamespacedKey(plugin, "custom_mob_range");
         testActiveKey = new NamespacedKey(plugin, "custom_mob_test_active");
         testToolKey = new NamespacedKey(plugin, "custom_mob_test_tool");
-
-        Bukkit.getScheduler().runTaskTimer(plugin, this::tickAggressiveTests, 5L, 5L);
+        Bukkit.getScheduler().runTaskTimer(plugin, this::tickTests, 5L, 5L);
     }
 
     @EventHandler(ignoreCancelled = true)
     public void onTestToolUse(PlayerInteractEntityEvent event) {
         if (event.getHand() != EquipmentSlot.HAND) return;
-
         Player player = event.getPlayer();
         if (!player.hasPermission("dungeons.admin")) return;
         if (!player.getWorld().getName().equals(TemplateWorldManager.WORLD_NAME)) return;
         if (!(event.getRightClicked() instanceof LivingEntity entity) || !isPreview(entity)) return;
         if (!isTestTool(player.getInventory().getItemInMainHand())) return;
-
         event.setCancelled(true);
         long now = System.currentTimeMillis();
         long previous = lastToggleAt.getOrDefault(player.getUniqueId(), 0L);
         if (now - previous < TOGGLE_DEBOUNCE_MILLIS) return;
         lastToggleAt.put(player.getUniqueId(), now);
-
         if (isTestActive(entity)) {
             freeze(entity);
-            player.sendMessage("§6§l[Dungeons] §b몬스터 테스트를 종료하고 다시 정지시켰습니다.");
+            player.sendMessage("§6§l[Dungeons] §b몬스터 테스트를 종료했습니다.");
         } else {
             activate(entity);
-            player.sendMessage("§6§l[Dungeons] §a몬스터 테스트를 시작했습니다. §7다시 우클릭하면 정지합니다.");
+            player.sendMessage("§6§l[Dungeons] §a" + roleKorean(getRole(entity)) + " 테스트를 시작했습니다.");
         }
     }
 
@@ -76,7 +73,7 @@ public final class MobTestToolManager implements Listener {
     public void onTarget(EntityTargetLivingEntityEvent event) {
         if (!(event.getEntity() instanceof LivingEntity entity)) return;
         if (!isPreview(entity) || !isTestActive(entity)) return;
-        if (!isAggressive(entity)) {
+        if (!isHostileRole(entity)) {
             event.setCancelled(true);
             if (entity instanceof Mob mob) mob.setTarget(null);
         }
@@ -86,7 +83,7 @@ public final class MobTestToolManager implements Listener {
     public void onPreviewAttack(EntityDamageByEntityEvent event) {
         if (!(event.getDamager() instanceof LivingEntity attacker)) return;
         if (!isPreview(attacker) || !isTestActive(attacker)) return;
-        if (!isAggressive(attacker)) event.setCancelled(true);
+        if (!isHostileRole(attacker)) event.setCancelled(true);
     }
 
     @EventHandler(ignoreCancelled = true)
@@ -99,52 +96,43 @@ public final class MobTestToolManager implements Listener {
         }
     }
 
-    private void tickAggressiveTests() {
+    private void tickTests() {
         var world = Bukkit.getWorld(TemplateWorldManager.WORLD_NAME);
         if (world == null) return;
-
         for (LivingEntity entity : world.getLivingEntities()) {
-            if (!isPreview(entity) || !isTestActive(entity) || !isAggressive(entity)) continue;
-
-            Player target = nearestTarget(entity);
+            if (!isPreview(entity) || !isTestActive(entity)) continue;
+            if (!isHostileRole(entity)) {
+                if (entity instanceof Mob mob) mob.setTarget(null);
+                continue;
+            }
+            Player target = nearestTarget(entity, getRange(entity));
             if (target == null) {
                 if (entity instanceof Mob mob) mob.setTarget(null);
                 continue;
             }
-
             if (entity instanceof Mob mob) mob.setTarget(target);
-
             double distanceSquared = entity.getLocation().distanceSquared(target.getLocation());
             if (distanceSquared > ATTACK_RANGE * ATTACK_RANGE) {
-                Vector direction = target.getLocation().toVector()
-                        .subtract(entity.getLocation().toVector());
-                direction.setY(0.0);
+                Vector direction = target.getLocation().toVector().subtract(entity.getLocation().toVector());
+                direction.setY(0);
                 if (direction.lengthSquared() > 0.001) {
-                    direction.normalize().multiply(0.28);
+                    direction.normalize().multiply(getRole(entity).equals("BOSS") ? 0.32 : 0.28);
                     direction.setY(entity.getVelocity().getY());
                     entity.setVelocity(direction);
                 }
                 continue;
             }
-
             long now = System.currentTimeMillis();
             long previous = lastAttackAt.getOrDefault(entity.getUniqueId(), 0L);
             if (now - previous < ATTACK_COOLDOWN_MILLIS) continue;
             lastAttackAt.put(entity.getUniqueId(), now);
             target.damage(attackDamage(entity), entity);
-            target.setVelocity(target.getVelocity().add(
-                    target.getLocation().toVector()
-                            .subtract(entity.getLocation().toVector())
-                            .setY(0.2)
-                            .normalize()
-                            .multiply(0.35)
-            ));
         }
     }
 
-    private Player nearestTarget(LivingEntity entity) {
+    private Player nearestTarget(LivingEntity entity, double range) {
         Player nearest = null;
-        double nearestDistance = TARGET_RANGE * TARGET_RANGE;
+        double nearestDistance = range * range;
         for (Player player : entity.getWorld().getPlayers()) {
             GameMode mode = player.getGameMode();
             if (mode != GameMode.SURVIVAL && mode != GameMode.ADVENTURE) continue;
@@ -163,7 +151,7 @@ public final class MobTestToolManager implements Listener {
         entity.setInvulnerable(false);
         entity.setSilent(false);
         entity.setAI(true);
-        if (!isAggressive(entity) && entity instanceof Mob mob) mob.setTarget(null);
+        if (!isHostileRole(entity) && entity instanceof Mob mob) mob.setTarget(null);
     }
 
     private void freeze(LivingEntity entity) {
@@ -178,6 +166,29 @@ public final class MobTestToolManager implements Listener {
         entity.setHealth(maxHealth(entity));
     }
 
+    private String getRole(LivingEntity entity) {
+        return entity.getPersistentDataContainer().getOrDefault(roleKey, PersistentDataType.STRING, "NORMAL");
+    }
+
+    private boolean isHostileRole(LivingEntity entity) {
+        String role = getRole(entity);
+        return role.equals("NORMAL") || role.equals("BOSS");
+    }
+
+    private double getRange(LivingEntity entity) {
+        return entity.getPersistentDataContainer().getOrDefault(rangeKey, PersistentDataType.DOUBLE, 24.0);
+    }
+
+    private String roleKorean(String role) {
+        return switch (role) {
+            case "BOSS" -> "보스몹";
+            case "TRADER" -> "거래인";
+            case "REWARD" -> "보상지급인";
+            case "ALLY" -> "조력자";
+            default -> "일반몹";
+        };
+    }
+
     private double maxHealth(LivingEntity entity) {
         AttributeInstance attribute = entity.getAttribute(Attribute.MAX_HEALTH);
         return attribute == null ? Math.max(1.0, entity.getHealth()) : Math.max(1.0, attribute.getValue());
@@ -189,23 +200,15 @@ public final class MobTestToolManager implements Listener {
     }
 
     private boolean isPreview(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(
-                previewKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
-    }
-
-    private boolean isAggressive(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(
-                aggressiveKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
+        return entity.getPersistentDataContainer().getOrDefault(previewKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
 
     private boolean isTestActive(LivingEntity entity) {
-        return entity.getPersistentDataContainer().getOrDefault(
-                testActiveKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
+        return entity.getPersistentDataContainer().getOrDefault(testActiveKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
 
     private boolean isTestTool(ItemStack item) {
         if (item == null || item.getType() != Material.ECHO_SHARD || !item.hasItemMeta()) return false;
-        return item.getItemMeta().getPersistentDataContainer().getOrDefault(
-                testToolKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
+        return item.getItemMeta().getPersistentDataContainer().getOrDefault(testToolKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
 }
