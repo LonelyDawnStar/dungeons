@@ -4,6 +4,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.Particle;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.boss.BarColor;
@@ -20,20 +21,25 @@ import org.bukkit.event.entity.EntityTargetLivingEntityEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Vector;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class MobTestToolManager implements Listener {
     private static final long TOGGLE_DEBOUNCE_MILLIS = 300L;
-    private static final long ACTION_COOLDOWN_MILLIS = 1000L;
 
     private final NamespacedKey previewKey, roleKey, attackRangeKey, testActiveKey, testToolKey;
     private final NamespacedKey bossBarKey, bossColorKey, allyModeKey, allyPowerKey, allyRangeKey;
+    private final NamespacedKey aiTypeKey, detectionRangeKey, moveSpeedKey, attackIntervalKey, preferredDistanceKey, targetPriorityKey;
     private final Map<UUID, Long> lastToggleAt = new HashMap<>();
     private final Map<UUID, Long> lastActionAt = new HashMap<>();
     private final Map<UUID, BossBar> bossBars = new HashMap<>();
@@ -49,6 +55,12 @@ public final class MobTestToolManager implements Listener {
         allyModeKey = new NamespacedKey(plugin, "role_ally_mode");
         allyPowerKey = new NamespacedKey(plugin, "role_ally_power");
         allyRangeKey = new NamespacedKey(plugin, "role_ally_range");
+        aiTypeKey = new NamespacedKey(plugin, "custom_mob_ai_type");
+        detectionRangeKey = new NamespacedKey(plugin, "custom_mob_detection_range");
+        moveSpeedKey = new NamespacedKey(plugin, "custom_mob_move_speed");
+        attackIntervalKey = new NamespacedKey(plugin, "custom_mob_attack_interval");
+        preferredDistanceKey = new NamespacedKey(plugin, "custom_mob_preferred_distance");
+        targetPriorityKey = new NamespacedKey(plugin, "custom_mob_target_priority");
         Bukkit.getScheduler().runTaskTimer(plugin, this::tickTests, 5L, 5L);
     }
 
@@ -66,10 +78,10 @@ public final class MobTestToolManager implements Listener {
         lastToggleAt.put(player.getUniqueId(), now);
         if (isTestActive(entity)) {
             freeze(entity);
-            player.sendMessage("§6§l[Dungeons] §b역할 테스트를 종료했습니다.");
+            player.sendMessage("§6§l[Dungeons] §bAI 테스트를 종료했습니다.");
         } else {
             activate(entity);
-            player.sendMessage("§6§l[Dungeons] §a" + roleKorean(role(entity)) + " 테스트를 시작했습니다.");
+            player.sendMessage("§6§l[Dungeons] §a" + roleKorean(role(entity)) + " AI 테스트를 시작했습니다.");
         }
     }
 
@@ -119,20 +131,75 @@ public final class MobTestToolManager implements Listener {
     }
 
     private void tickEnemy(LivingEntity entity) {
-        double hitRange = attackRange(entity);
-        double detectionRange = Math.max(16.0, hitRange + 12.0);
-        Player target = nearestPlayer(entity, detectionRange);
+        PersistentDataContainer data = entity.getPersistentDataContainer();
+        String aiType = data.getOrDefault(aiTypeKey, PersistentDataType.STRING, "MELEE");
+        double detection = data.getOrDefault(detectionRangeKey, PersistentDataType.DOUBLE, Math.max(16.0, attackRange(entity) + 12.0));
+        double speed = data.getOrDefault(moveSpeedKey, PersistentDataType.DOUBLE, role(entity).equals("BOSS") ? 0.34 : 0.28);
+        double preferred = data.getOrDefault(preferredDistanceKey, PersistentDataType.DOUBLE, 8.0);
+        Player target = selectTarget(entity, detection, data.getOrDefault(targetPriorityKey, PersistentDataType.STRING, "NEAREST"));
         if (target == null) {
             if (entity instanceof Mob mob) mob.setTarget(null);
             return;
         }
         if (entity instanceof Mob mob) mob.setTarget(target);
-        if (entity.getLocation().distanceSquared(target.getLocation()) > hitRange * hitRange) {
-            moveToward(entity, target, role(entity).equals("BOSS") ? 0.34 : 0.28);
+        double distance = entity.getLocation().distance(target.getLocation());
+        switch (aiType) {
+            case "RANGED" -> tickRanged(entity, target, distance, preferred, speed);
+            case "CHARGE" -> tickCharge(entity, target, distance, preferred, speed);
+            case "FLEE" -> tickFlee(entity, target, distance, preferred, speed);
+            case "TURRET" -> tickTurret(entity, target, distance);
+            default -> tickMelee(entity, target, distance, speed);
+        }
+    }
+
+    private void tickMelee(LivingEntity entity, Player target, double distance, double speed) {
+        if (distance > attackRange(entity)) {
+            moveToward(entity, target, speed);
             return;
         }
-        if (!actionReady(entity)) return;
-        target.damage(attackDamage(entity), entity);
+        if (actionReady(entity)) target.damage(attackDamage(entity), entity);
+    }
+
+    private void tickRanged(LivingEntity entity, Player target, double distance, double preferred, double speed) {
+        if (distance < preferred * 0.65) moveAway(entity, target, speed);
+        else if (distance > preferred * 1.2) moveToward(entity, target, speed);
+        else entity.setVelocity(new Vector(0, entity.getVelocity().getY(), 0));
+        if (distance <= Math.max(preferred * 1.8, attackRange(entity)) && actionReady(entity)) {
+            entity.getWorld().spawnParticle(Particle.CRIT, target.getLocation().add(0, 1, 0), 18, 0.25, 0.4, 0.25, 0.08);
+            target.damage(attackDamage(entity), entity);
+        }
+    }
+
+    private void tickCharge(LivingEntity entity, Player target, double distance, double preferred, double speed) {
+        if (distance < preferred * 0.75 && !actionReady(entity)) {
+            moveAway(entity, target, speed * 0.7);
+            return;
+        }
+        if (actionReady(entity)) {
+            Vector direction = target.getLocation().toVector().subtract(entity.getLocation().toVector()).normalize();
+            entity.setVelocity(direction.multiply(Math.max(0.8, speed * 3.5)).setY(0.18));
+            entity.getWorld().spawnParticle(Particle.CLOUD, entity.getLocation().add(0, 0.5, 0), 24, 0.4, 0.2, 0.4, 0.12);
+        } else if (distance > attackRange(entity)) {
+            moveToward(entity, target, speed * 0.65);
+        } else {
+            target.damage(attackDamage(entity) * 1.35, entity);
+        }
+    }
+
+    private void tickFlee(LivingEntity entity, Player target, double distance, double preferred, double speed) {
+        if (distance < preferred) moveAway(entity, target, speed);
+        else entity.setVelocity(new Vector(0, entity.getVelocity().getY(), 0));
+        if (distance <= Math.max(preferred, attackRange(entity)) && actionReady(entity)) {
+            target.damage(Math.max(1.0, attackDamage(entity) * 0.6), entity);
+        }
+    }
+
+    private void tickTurret(LivingEntity entity, Player target, double distance) {
+        entity.setVelocity(new Vector());
+        if (distance <= Math.max(attackRange(entity), preferredDistance(entity)) && actionReady(entity)) {
+            entity.getWorld().spawnParticle(Particle.ELECTRIC_SPARK, entity.getEyeLocation(), 12, 0.15, 0.15, 0.15, 0.05);
+            target.damage(attackDamage(entity), entity);
+        }
     }
 
     private void tickAlly(LivingEntity entity) {
@@ -157,18 +224,23 @@ public final class MobTestToolManager implements Listener {
         if (actionReady(entity)) target.damage(power, entity);
     }
 
-    private Player nearestPlayer(LivingEntity entity, double range) {
-        Player nearest = null;
-        double nearestDistance = range * range;
+    private Player selectTarget(LivingEntity entity, double range, String priority) {
+        List<Player> players = new ArrayList<>();
         for (Player player : entity.getWorld().getPlayers()) {
             GameMode mode = player.getGameMode();
-            if (mode != GameMode.SURVIVAL && mode != GameMode.ADVENTURE) continue;
-            if (player.isDead() || !player.isValid()) continue;
-            double distance = entity.getLocation().distanceSquared(player.getLocation());
-            if (distance < nearestDistance) { nearestDistance = distance; nearest = player; }
+            if ((mode == GameMode.SURVIVAL || mode == GameMode.ADVENTURE) && !player.isDead() && player.isValid()
+                    && entity.getLocation().distanceSquared(player.getLocation()) <= range * range) players.add(player);
         }
-        return nearest;
+        if (players.isEmpty()) return null;
+        return switch (priority) {
+            case "LOWEST_HEALTH" -> players.stream().min(Comparator.comparingDouble(Player::getHealth)).orElse(players.getFirst());
+            case "FARTHEST" -> players.stream().max(Comparator.comparingDouble(p -> entity.getLocation().distanceSquared(p.getLocation()))).orElse(players.getFirst());
+            case "RANDOM" -> players.get(ThreadLocalRandom.current().nextInt(players.size()));
+            default -> players.stream().min(Comparator.comparingDouble(p -> entity.getLocation().distanceSquared(p.getLocation()))).orElse(players.getFirst());
+        };
     }
+
+    private Player nearestPlayer(LivingEntity entity, double range) { return selectTarget(entity, range, "NEAREST"); }
 
     private LivingEntity nearestEnemy(LivingEntity ally, double range) {
         LivingEntity nearest = null;
@@ -191,9 +263,20 @@ public final class MobTestToolManager implements Listener {
         }
     }
 
+    private void moveAway(LivingEntity entity, LivingEntity target, double speed) {
+        Vector direction = entity.getLocation().toVector().subtract(target.getLocation().toVector());
+        direction.setY(0.0);
+        if (direction.lengthSquared() > 0.001) {
+            direction.normalize().multiply(speed);
+            direction.setY(entity.getVelocity().getY());
+            entity.setVelocity(direction);
+        }
+    }
+
     private boolean actionReady(LivingEntity entity) {
         long now = System.currentTimeMillis();
-        if (now - lastActionAt.getOrDefault(entity.getUniqueId(), 0L) < ACTION_COOLDOWN_MILLIS) return false;
+        long cooldown = Math.max(100L, entity.getPersistentDataContainer().getOrDefault(attackIntervalKey, PersistentDataType.INTEGER, 20) * 50L);
+        if (now - lastActionAt.getOrDefault(entity.getUniqueId(), 0L) < cooldown) return false;
         lastActionAt.put(entity.getUniqueId(), now);
         return true;
     }
@@ -243,6 +326,7 @@ public final class MobTestToolManager implements Listener {
     private double maxHealth(LivingEntity entity) { AttributeInstance attribute = entity.getAttribute(Attribute.MAX_HEALTH); return attribute == null ? Math.max(1.0, entity.getHealth()) : Math.max(1.0, attribute.getValue()); }
     private double attackDamage(LivingEntity entity) { AttributeInstance attribute = entity.getAttribute(Attribute.ATTACK_DAMAGE); return attribute == null ? 2.0 : Math.max(0.0, attribute.getValue()); }
     private double attackRange(LivingEntity entity) { return entity.getPersistentDataContainer().getOrDefault(attackRangeKey, PersistentDataType.DOUBLE, 2.1); }
+    private double preferredDistance(LivingEntity entity) { return entity.getPersistentDataContainer().getOrDefault(preferredDistanceKey, PersistentDataType.DOUBLE, 8.0); }
     private String role(LivingEntity entity) { return entity.getPersistentDataContainer().getOrDefault(roleKey, PersistentDataType.STRING, "NORMAL"); }
     private boolean isHostile(LivingEntity entity) { String role = role(entity); return role.equals("NORMAL") || role.equals("BOSS"); }
     private boolean isPreview(LivingEntity entity) { return entity.getPersistentDataContainer().getOrDefault(previewKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1; }
