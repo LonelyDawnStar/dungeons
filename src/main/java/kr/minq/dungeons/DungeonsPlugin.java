@@ -22,6 +22,7 @@ public final class DungeonsPlugin extends JavaPlugin {
     private EquipmentDropEditorManager equipmentDropEditorManager;
     private RoleSettingsManager roleSettingsManager;
     private MobTestToolManager mobTestToolManager;
+    private MobAiEditorManager mobAiEditorManager;
 
     @Override
     public void onEnable() {
@@ -36,6 +37,7 @@ public final class DungeonsPlugin extends JavaPlugin {
         roleSettingsManager = new RoleSettingsManager(this);
         customMobEditorManager = new CustomMobEditorManager(this, equipmentDropEditorManager, roleSettingsManager);
         mobTestToolManager = new MobTestToolManager(this);
+        mobAiEditorManager = new MobAiEditorManager(this);
 
         Bukkit.getPluginManager().registerEvents(dungeonManager, this);
         Bukkit.getPluginManager().registerEvents(templateWorldManager, this);
@@ -44,7 +46,8 @@ public final class DungeonsPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(customMobEditorManager, this);
         Bukkit.getPluginManager().registerEvents(roleSettingsManager, this);
         Bukkit.getPluginManager().registerEvents(mobTestToolManager, this);
-        getLogger().info("Dungeons 0.9.0 complete dungeon instances enabled for Paper 26.2");
+        Bukkit.getPluginManager().registerEvents(mobAiEditorManager, this);
+        getLogger().info("Dungeons 1.0.0 custom mob AI editor enabled for Paper 26.2");
     }
 
     @Override
@@ -66,6 +69,7 @@ public final class DungeonsPlugin extends JavaPlugin {
             case "party" -> handleParty(sender, args);
             case "templateworld" -> handleTemplateWorld(sender, args);
             case "template" -> handleTemplate(sender, args);
+            case "mobai", "ai" -> handleMobAi(sender);
             case "register" -> handleRegister(sender, args);
             case "unregister" -> handleUnregister(sender, args);
             case "challenge" -> handleChallenge(sender, args);
@@ -84,7 +88,7 @@ public final class DungeonsPlugin extends JavaPlugin {
         if (!command.getName().equalsIgnoreCase("dungeon")) return List.of();
         if (args.length == 1) {
             List<String> roots = new ArrayList<>(List.of("menu", "help", "party", "challenge", "finish", "abandon", "status"));
-            if (sender.hasPermission("dungeons.admin")) roots.addAll(List.of("register", "unregister", "templateworld", "template", "start", "stop"));
+            if (sender.hasPermission("dungeons.admin")) roots.addAll(List.of("mobai", "register", "unregister", "templateworld", "template", "start", "stop"));
             return filterSuggestions(roots, args[0]);
         }
         if (args.length == 2) {
@@ -120,6 +124,11 @@ public final class DungeonsPlugin extends JavaPlugin {
         String lower = input.toLowerCase(Locale.ROOT);
         return values.stream().filter(value -> value.toLowerCase(Locale.ROOT).startsWith(lower))
                 .sorted(String.CASE_INSENSITIVE_ORDER).toList();
+    }
+
+    private void handleMobAi(CommandSender sender) {
+        if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 AI 편집기를 열 수 있습니다."); return; }
+        player.sendMessage("§6§l[Dungeons] §f" + mobAiEditorManager.openForLookedAtMob(player));
     }
 
     private void handleRegister(CommandSender sender, String[] args) {
@@ -223,7 +232,8 @@ public final class DungeonsPlugin extends JavaPlugin {
     }
 
     private void sendHelp(CommandSender sender) {
-        sender.sendMessage("§6§lDungeons 0.9.0 §7- 완성형 던전 인스턴스");
+        sender.sendMessage("§6§lDungeons 1.0.0 §7- 커스텀 몬스터 AI");
+        sender.sendMessage("§e/dungeon mobai §7- 바라보는 프리뷰 몹의 AI 편집 GUI");
         sender.sendMessage("§e/dungeon §7- 던전 선택 GUI");
         sender.sendMessage("§e/dungeon challenge <ID> §7- 등록된 던전 도전");
         sender.sendMessage("§e/dungeon finish §7- 던전 완료·초기화");
