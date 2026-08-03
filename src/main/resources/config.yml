@@ -1,0 +1,2 @@
+# 완성형 던전 등록 정보는 /dungeon register 명령어로 자동 저장됩니다.
+dungeons: {}
