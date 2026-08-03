@@ -7,7 +7,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
@@ -17,7 +16,7 @@ public final class DungeonsPlugin extends JavaPlugin {
     private TestDungeonManager dungeonManager;
     private TemplateWorldManager templateWorldManager;
     private RoomTemplateManager roomTemplateManager;
-    private DungeonGenerationManager generationManager;
+    private CompleteDungeonManager completeDungeonManager;
     private SampleRoomGenerator sampleRoomGenerator;
     private CustomMobEditorManager customMobEditorManager;
     private EquipmentDropEditorManager equipmentDropEditorManager;
@@ -26,11 +25,12 @@ public final class DungeonsPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        saveDefaultConfig();
         partyManager = new PartyManager();
         dungeonManager = new TestDungeonManager(this);
         templateWorldManager = new TemplateWorldManager(this);
         roomTemplateManager = new RoomTemplateManager(this, templateWorldManager);
-        generationManager = new DungeonGenerationManager(this, roomTemplateManager);
+        completeDungeonManager = new CompleteDungeonManager(this, roomTemplateManager, partyManager);
         sampleRoomGenerator = new SampleRoomGenerator(this, templateWorldManager, roomTemplateManager);
         equipmentDropEditorManager = new EquipmentDropEditorManager(this);
         roleSettingsManager = new RoleSettingsManager(this);
@@ -39,30 +39,41 @@ public final class DungeonsPlugin extends JavaPlugin {
 
         Bukkit.getPluginManager().registerEvents(dungeonManager, this);
         Bukkit.getPluginManager().registerEvents(templateWorldManager, this);
+        Bukkit.getPluginManager().registerEvents(completeDungeonManager, this);
         Bukkit.getPluginManager().registerEvents(equipmentDropEditorManager, this);
         Bukkit.getPluginManager().registerEvents(customMobEditorManager, this);
         Bukkit.getPluginManager().registerEvents(roleSettingsManager, this);
         Bukkit.getPluginManager().registerEvents(mobTestToolManager, this);
-        getLogger().info("Dungeons 0.8.0 enabled for Paper 26.2");
+        getLogger().info("Dungeons 0.9.0 complete dungeon instances enabled for Paper 26.2");
     }
 
     @Override
     public void onDisable() {
+        if (completeDungeonManager != null) completeDungeonManager.shutdown();
         if (dungeonManager != null && dungeonManager.isRunning()) dungeonManager.stop(false);
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!command.getName().equalsIgnoreCase("dungeon")) return false;
-        if (args.length == 0 || args[0].equalsIgnoreCase("help")) { sendHelp(sender); return true; }
+        if (args.length == 0 || args[0].equalsIgnoreCase("menu")) {
+            if (!(sender instanceof Player player)) sender.sendMessage("§c플레이어만 메뉴를 열 수 있습니다.");
+            else completeDungeonManager.openMenu(player);
+            return true;
+        }
         switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "help" -> sendHelp(sender);
             case "party" -> handleParty(sender, args);
             case "templateworld" -> handleTemplateWorld(sender, args);
             case "template" -> handleTemplate(sender, args);
-            case "generate" -> handleGenerate(sender, args);
+            case "register" -> handleRegister(sender, args);
+            case "unregister" -> handleUnregister(sender, args);
+            case "challenge" -> handleChallenge(sender, args);
+            case "finish", "complete" -> handleFinish(sender, false);
+            case "abandon", "leave" -> handleFinish(sender, true);
+            case "status" -> sender.sendMessage("§6§l[Dungeons] §f" + completeDungeonManager.status());
             case "start" -> handleStart(sender);
             case "stop" -> handleStop(sender);
-            case "status" -> handleStatus(sender);
             default -> sender.sendMessage("§c알 수 없는 명령어입니다. /dungeon help");
         }
         return true;
@@ -72,22 +83,22 @@ public final class DungeonsPlugin extends JavaPlugin {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!command.getName().equalsIgnoreCase("dungeon")) return List.of();
         if (args.length == 1) {
-            List<String> roots = new ArrayList<>(List.of("help", "party", "start", "status"));
-            if (sender.hasPermission("dungeons.admin")) roots.addAll(List.of("stop", "templateworld", "template", "generate"));
+            List<String> roots = new ArrayList<>(List.of("menu", "help", "party", "challenge", "finish", "abandon", "status"));
+            if (sender.hasPermission("dungeons.admin")) roots.addAll(List.of("register", "unregister", "templateworld", "template", "start", "stop"));
             return filterSuggestions(roots, args[0]);
         }
         if (args.length == 2) {
             return switch (args[0].toLowerCase(Locale.ROOT)) {
                 case "party" -> filterSuggestions(List.of("create", "invite", "accept", "leave", "list"), args[1]);
-                case "templateworld" -> sender.hasPermission("dungeons.admin")
-                        ? filterSuggestions(List.of("create", "enter", "leave"), args[1]) : List.of();
+                case "templateworld" -> sender.hasPermission("dungeons.admin") ? filterSuggestions(List.of("create", "enter", "leave"), args[1]) : List.of();
                 case "template" -> sender.hasPermission("dungeons.admin")
                         ? filterSuggestions(List.of("wand", "pos1", "pos2", "info", "clear", "save", "list", "delete", "paste", "samples"), args[1]) : List.of();
-                case "generate" -> sender.hasPermission("dungeons.admin")
-                        ? filterSuggestions(List.of("random", "custom"), args[1]) : List.of();
+                case "challenge", "unregister" -> filterSuggestions(completeDungeonManager.ids(), args[1]);
+                case "register" -> List.of("<던전ID>");
                 default -> List.of();
             };
         }
+        if (args.length == 3 && args[0].equalsIgnoreCase("register")) return filterSuggestions(roomTemplateManager.listNames(), args[2]);
         if (args.length == 3 && args[0].equalsIgnoreCase("party") && args[1].equalsIgnoreCase("invite")) {
             List<String> names = Bukkit.getOnlinePlayers().stream().map(Player::getName)
                     .filter(name -> !(sender instanceof Player player) || !name.equalsIgnoreCase(player.getName())).toList();
@@ -102,12 +113,6 @@ public final class DungeonsPlugin extends JavaPlugin {
         if (args.length == 4 && args[0].equalsIgnoreCase("template") && args[1].equalsIgnoreCase("save")) {
             return filterSuggestions(roomTemplateManager.supportedTypes(), args[3]);
         }
-        if (args.length >= 3 && args[0].equalsIgnoreCase("generate") && args[1].equalsIgnoreCase("custom")) {
-            return filterSuggestions(generationManager.templateNames(), args[args.length - 1]);
-        }
-        if (args.length == 3 && args[0].equalsIgnoreCase("generate") && args[1].equalsIgnoreCase("random")) {
-            return filterSuggestions(List.of("5", "7", "10"), args[2]);
-        }
         return List.of();
     }
 
@@ -115,6 +120,30 @@ public final class DungeonsPlugin extends JavaPlugin {
         String lower = input.toLowerCase(Locale.ROOT);
         return values.stream().filter(value -> value.toLowerCase(Locale.ROOT).startsWith(lower))
                 .sorted(String.CASE_INSENSITIVE_ORDER).toList();
+    }
+
+    private void handleRegister(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 등록할 수 있습니다."); return; }
+        if (!player.hasPermission("dungeons.admin")) { player.sendMessage("§c관리자 권한이 필요합니다."); return; }
+        if (args.length < 3) { player.sendMessage("§c사용법: /dungeon register <던전ID> <템플릿이름>"); return; }
+        player.sendMessage("§6§l[Dungeons] §f" + completeDungeonManager.register(player, args[1], args[2]));
+    }
+
+    private void handleUnregister(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("dungeons.admin")) { sender.sendMessage("§c관리자 권한이 필요합니다."); return; }
+        if (args.length < 2) { sender.sendMessage("§c사용법: /dungeon unregister <던전ID>"); return; }
+        sender.sendMessage("§6§l[Dungeons] §f" + completeDungeonManager.unregister(args[1]));
+    }
+
+    private void handleChallenge(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 도전할 수 있습니다."); return; }
+        if (args.length < 2) { completeDungeonManager.openMenu(player); return; }
+        player.sendMessage("§6§l[Dungeons] §f" + completeDungeonManager.start(player, args[1]));
+    }
+
+    private void handleFinish(CommandSender sender, boolean abandoned) {
+        if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 사용할 수 있습니다."); return; }
+        player.sendMessage("§6§l[Dungeons] §f" + completeDungeonManager.finish(player, abandoned));
     }
 
     private void handleTemplateWorld(CommandSender sender, String[] args) {
@@ -132,10 +161,7 @@ public final class DungeonsPlugin extends JavaPlugin {
     private void handleTemplate(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 사용할 수 있습니다."); return; }
         if (!player.hasPermission("dungeons.admin")) { player.sendMessage("§c관리자 권한이 필요합니다."); return; }
-        if (args.length < 2) {
-            player.sendMessage("§e/dungeon template <wand|pos1|pos2|info|clear|save|list|delete|paste|samples>");
-            return;
-        }
+        if (args.length < 2) { player.sendMessage("§e/dungeon template <wand|save|list|delete|paste|info>"); return; }
         switch (args[1].toLowerCase(Locale.ROOT)) {
             case "wand" -> player.sendMessage("§6§l[Dungeons] §f" + templateWorldManager.giveWand(player));
             case "pos1" -> player.sendMessage(templateWorldManager.setPosition(player, true));
@@ -166,31 +192,6 @@ public final class DungeonsPlugin extends JavaPlugin {
         }
     }
 
-    private void handleGenerate(CommandSender sender, String[] args) {
-        if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 던전을 생성할 수 있습니다."); return; }
-        if (!player.hasPermission("dungeons.admin")) { player.sendMessage("§c관리자 권한이 필요합니다."); return; }
-        if (args.length < 2) {
-            player.sendMessage("§e/dungeon generate random [방 개수]");
-            player.sendMessage("§e/dungeon generate custom <템플릿1> <템플릿2> ...");
-            return;
-        }
-        switch (args[1].toLowerCase(Locale.ROOT)) {
-            case "random" -> {
-                int rooms = 7;
-                if (args.length >= 3) {
-                    try { rooms = Integer.parseInt(args[2]); }
-                    catch (NumberFormatException exception) { player.sendMessage("§c방 개수는 숫자로 입력하세요."); return; }
-                }
-                player.sendMessage("§6§l[Dungeons] §f" + generationManager.generateRandom(player, rooms));
-            }
-            case "custom", "manual" -> {
-                if (args.length < 3) { player.sendMessage("§c템플릿 이름을 순서대로 입력하세요."); return; }
-                player.sendMessage("§6§l[Dungeons] §f" + generationManager.generateCustom(player, Arrays.asList(args).subList(2, args.length)));
-            }
-            default -> player.sendMessage("§c사용법: /dungeon generate <random|custom>");
-        }
-    }
-
     private void handleParty(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 사용할 수 있습니다."); return; }
         if (args.length < 2) { player.sendMessage("§6§l[Dungeons] §f파티: " + partyManager.describe(player)); return; }
@@ -202,7 +203,7 @@ public final class DungeonsPlugin extends JavaPlugin {
                 player.sendMessage(target == null ? "§c플레이어를 찾을 수 없습니다." : partyManager.invite(player, target));
             }
             case "accept" -> player.sendMessage(partyManager.accept(player));
-            case "leave" -> player.sendMessage(dungeonManager.isRunning() ? "§c던전 중에는 나갈 수 없습니다." : partyManager.leave(player));
+            case "leave" -> player.sendMessage(partyManager.leave(player));
             case "list" -> player.sendMessage("§f파티원: " + partyManager.describe(player));
             default -> player.sendMessage("§c알 수 없는 파티 명령어입니다.");
         }
@@ -210,7 +211,6 @@ public final class DungeonsPlugin extends JavaPlugin {
 
     private void handleStart(CommandSender sender) {
         if (!(sender instanceof Player player)) { sender.sendMessage("§c플레이어만 사용할 수 있습니다."); return; }
-        if (dungeonManager.isRunning()) { player.sendMessage("§c이미 던전이 진행 중입니다."); return; }
         PartyManager.Party party = partyManager.getParty(player);
         if (party == null) { partyManager.createParty(player); party = partyManager.getParty(player); }
         if (!partyManager.isLeader(player)) { player.sendMessage("§c파티장만 시작할 수 있습니다."); return; }
@@ -222,18 +222,14 @@ public final class DungeonsPlugin extends JavaPlugin {
         sender.sendMessage(dungeonManager.stop(false));
     }
 
-    private void handleStatus(CommandSender sender) {
-        sender.sendMessage("§6§l[Dungeons] §f현재 상태: " + (dungeonManager.isRunning() ? "§a진행 중" : "§7대기 중"));
-        if (sender instanceof Player player) sender.sendMessage("§f파티: " + partyManager.describe(player));
-    }
-
     private void sendHelp(CommandSender sender) {
-        sender.sendMessage("§6§lDungeons 0.8.0 §7- Paper 26.2");
-        sender.sendMessage("§e/dungeon template samples §7- 8종 기본 테스트 방 생성·저장");
-        sender.sendMessage("§e/dungeon generate random [방 수] §7- 타입 기반 랜덤 던전 생성");
-        sender.sendMessage("§e/dungeon generate custom <이름...> §7- 입력한 순서대로 던전 생성");
-        sender.sendMessage("§e/dungeon template save <이름> <타입> §7- 선택 영역 저장");
-        sender.sendMessage("§e/dungeon template list §7- 저장된 방 목록");
-        sender.sendMessage("§e/dungeon template wand §7- 편집 도구 일괄 지급");
+        sender.sendMessage("§6§lDungeons 0.9.0 §7- 완성형 던전 인스턴스");
+        sender.sendMessage("§e/dungeon §7- 던전 선택 GUI");
+        sender.sendMessage("§e/dungeon challenge <ID> §7- 등록된 던전 도전");
+        sender.sendMessage("§e/dungeon finish §7- 던전 완료·초기화");
+        sender.sendMessage("§e/dungeon abandon §7- 도전 포기·초기화");
+        sender.sendMessage("§e/dungeon register <ID> <템플릿> §7- 현재 위치에 고정 플레이 던전 등록");
+        sender.sendMessage("§e/dungeon unregister <ID> §7- 던전 등록 해제");
+        sender.sendMessage("§e/dungeon template wand §7- 금 도끼와 몹 편집 도구 지급");
     }
 }
