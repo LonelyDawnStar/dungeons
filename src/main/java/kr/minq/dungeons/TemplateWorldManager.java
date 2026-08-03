@@ -76,7 +76,7 @@ public final class TemplateWorldManager implements Listener {
         if (world == null) return "§c템플릿 월드를 생성하지 못했습니다.";
         if (!player.getWorld().getName().equals(WORLD_NAME)) returnLocations.put(player.getUniqueId(), player.getLocation().clone());
         player.teleport(world.getSpawnLocation().clone().add(0.5, 1.0, 0.5));
-        player.sendTitle("§6템플릿 월드", "§f방과 몬스터를 제작하세요", 10, 60, 20);
+        player.sendTitle("§6템플릿 월드", "§f완성형 던전과 몬스터를 제작하세요", 10, 60, 20);
         return "§a템플릿 월드로 이동했습니다.";
     }
 
@@ -94,13 +94,13 @@ public final class TemplateWorldManager implements Listener {
     public String giveWand(Player player) {
         if (!player.getWorld().getName().equals(WORLD_NAME)) return "§c템플릿 월드 안에서만 편집 도구를 받을 수 있습니다.";
         player.getInventory().addItem(
-                createTool(Material.WOODEN_AXE, "§6§l던전 템플릿 선택 도끼", List.of("§e좌클릭 §7- 첫 번째 지점", "§e우클릭 §7- 두 번째 지점"), wandKey),
+                createTool(Material.GOLDEN_AXE, "§6§l던전 템플릿 선택 도끼", List.of("§e좌클릭 §7- 첫 번째 지점", "§e우클릭 §7- 두 번째 지점", "§8월드에딧 나무 도끼와 별도로 작동합니다."), wandKey),
                 createTool(Material.STICK, "§e§l커스텀 몹 편집 막대기", List.of("§7프리뷰 몹을 우클릭하면 편집 GUI가 열립니다.", "§8일반 막대기는 작동하지 않습니다."), editorToolKey),
                 createTool(Material.BLAZE_ROD, "§6§l커스텀 몹 복제 막대기", List.of("§7프리뷰 몹 우클릭: 설정 복사", "§7블록 우클릭: 복사한 몹 배치", "§8일반 블레이즈 막대기는 작동하지 않습니다."), cloneToolKey),
                 createTool(Material.BREEZE_ROD, "§b§l커스텀 몹 삭제 막대기", List.of("§7프리뷰 몹을 우클릭하면 즉시 삭제합니다.", "§c삭제 후 복구할 수 없습니다.", "§8일반 브리즈 막대기는 작동하지 않습니다."), deleteToolKey),
                 createTool(Material.ECHO_SHARD, "§d§l커스텀 몹 테스트 조각", List.of("§7프리뷰 몹 우클릭: AI 테스트 시작", "§7다시 우클릭: 정지 상태로 복귀", "§8일반 메아리 조각은 작동하지 않습니다."), testToolKey)
         );
-        return "§a선택 도끼와 커스텀 몹 편집 도구 4종을 지급했습니다.";
+        return "§a금 도끼 선택 도구와 커스텀 몹 편집 도구 4종을 지급했습니다.";
     }
 
     private ItemStack createTool(Material material, String name, List<String> lore, NamespacedKey key) {
@@ -160,7 +160,7 @@ public final class TemplateWorldManager implements Listener {
     }
 
     private boolean isWand(ItemStack item) {
-        return item.getType() == Material.WOODEN_AXE && item.hasItemMeta()
+        return item.getType() == Material.GOLDEN_AXE && item.hasItemMeta()
                 && item.getItemMeta().getPersistentDataContainer().getOrDefault(wandKey, PersistentDataType.BYTE, (byte) 0) == (byte) 1;
     }
     private String describePosition(boolean first, Location location) {
