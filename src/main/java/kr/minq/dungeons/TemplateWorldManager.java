@@ -45,6 +45,8 @@ public final class TemplateWorldManager implements Listener {
         testToolKey = new NamespacedKey(plugin, "custom_mob_test_tool");
         aiToolKey = new NamespacedKey(plugin, "custom_mob_ai_tool");
         traitToolKey = new NamespacedKey(plugin, "custom_mob_trait_tool");
+        Bukkit.getPluginManager().registerEvents(new MobAiToolBridgeManager(plugin), plugin);
+        Bukkit.getPluginManager().registerEvents(new MobTraitEditorManager(plugin), plugin);
     }
 
     public World createOrLoadWorld() {
