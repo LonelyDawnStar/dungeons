@@ -32,6 +32,8 @@ public final class TemplateWorldManager implements Listener {
     private final NamespacedKey cloneToolKey;
     private final NamespacedKey deleteToolKey;
     private final NamespacedKey testToolKey;
+    private final NamespacedKey aiToolKey;
+    private final NamespacedKey traitToolKey;
     private final Map<UUID, Selection> selections = new HashMap<>();
     private final Map<UUID, Location> returnLocations = new HashMap<>();
 
@@ -41,6 +43,8 @@ public final class TemplateWorldManager implements Listener {
         cloneToolKey = new NamespacedKey(plugin, "custom_mob_clone_tool");
         deleteToolKey = new NamespacedKey(plugin, "custom_mob_delete_tool");
         testToolKey = new NamespacedKey(plugin, "custom_mob_test_tool");
+        aiToolKey = new NamespacedKey(plugin, "custom_mob_ai_tool");
+        traitToolKey = new NamespacedKey(plugin, "custom_mob_trait_tool");
     }
 
     public World createOrLoadWorld() {
@@ -98,9 +102,11 @@ public final class TemplateWorldManager implements Listener {
                 createTool(Material.STICK, "§e§l커스텀 몹 편집 막대기", List.of("§7프리뷰 몹을 우클릭하면 편집 GUI가 열립니다.", "§8일반 막대기는 작동하지 않습니다."), editorToolKey),
                 createTool(Material.BLAZE_ROD, "§6§l커스텀 몹 복제 막대기", List.of("§7프리뷰 몹 우클릭: 설정 복사", "§7블록 우클릭: 복사한 몹 배치", "§8일반 블레이즈 막대기는 작동하지 않습니다."), cloneToolKey),
                 createTool(Material.BREEZE_ROD, "§b§l커스텀 몹 삭제 막대기", List.of("§7프리뷰 몹을 우클릭하면 즉시 삭제합니다.", "§c삭제 후 복구할 수 없습니다.", "§8일반 브리즈 막대기는 작동하지 않습니다."), deleteToolKey),
-                createTool(Material.ECHO_SHARD, "§d§l커스텀 몹 테스트 조각", List.of("§7프리뷰 몹 우클릭: AI 테스트 시작", "§7다시 우클릭: 정지 상태로 복귀", "§8일반 메아리 조각은 작동하지 않습니다."), testToolKey)
+                createTool(Material.ECHO_SHARD, "§d§l커스텀 몹 테스트 조각", List.of("§7프리뷰 몹 우클릭: AI 테스트 시작", "§7다시 우클릭: 정지 상태로 복귀", "§8일반 메아리 조각은 작동하지 않습니다."), testToolKey),
+                createTool(Material.RECOVERY_COMPASS, "§3§l커스텀 몹 AI 설정 도구", List.of("§7프리뷰 몹 우클릭: AI 설정 GUI", "§7행동 유형·거리·속도·공격 주기를 설정합니다.", "§8일반 회수 나침반은 작동하지 않습니다."), aiToolKey),
+                createTool(Material.AMETHYST_SHARD, "§5§l커스텀 몹 고유 특성 도구", List.of("§7프리뷰 몹 우클릭: 바닐라 특성 편집", "§7원래 특성을 제거하거나 다른 몹에게 추가합니다.", "§8일반 자수정 조각은 작동하지 않습니다."), traitToolKey)
         );
-        return "§a금 도끼 선택 도구와 커스텀 몹 편집 도구 4종을 지급했습니다.";
+        return "§a금 도끼와 커스텀 몹 전용 도구 6종을 지급했습니다.";
     }
 
     private ItemStack createTool(Material material, String name, List<String> lore, NamespacedKey key) {
