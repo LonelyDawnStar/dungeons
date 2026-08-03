@@ -50,7 +50,6 @@ public final class CompleteDungeonManager implements Listener {
         roleKey = new NamespacedKey(plugin, "custom_mob_role");
         previewKey = new NamespacedKey(plugin, "custom_mob_preview");
         loadDefinitions();
-        // 서버가 비정상 종료된 뒤에도 잠금이 남지 않도록 실행 상태는 메모리에만 둔다.
         activeRuns.clear();
     }
 
@@ -123,7 +122,7 @@ public final class CompleteDungeonManager implements Listener {
             party = parties.getParty(leader);
         }
         if (!parties.isLeader(leader)) return "§c파티장만 던전을 시작할 수 있습니다.";
-        List<Player> members = parties.getOnlineMembers(party);
+        List<Player> members = new ArrayList<>(parties.getOnlineMembers(party));
         for (Player member : members) {
             if (playerDungeon.containsKey(member.getUniqueId())) return "§c파티원 중 이미 다른 던전에 참가 중인 사람이 있습니다.";
         }
@@ -284,7 +283,10 @@ public final class CompleteDungeonManager implements Listener {
         if (value == null || !value.matches("[a-zA-Z0-9_-]{1,40}")) return null;
         return value.toLowerCase(Locale.ROOT);
     }
-    private String format(Location location) { return location.getWorld().getName() + " " + location.getBlockX() + ", " + location.getBlockY() + ", " + location.getBlockZ(); }
+
+    private String format(Location location) {
+        return location.getWorld().getName() + " " + location.getBlockX() + ", " + location.getBlockY() + ", " + location.getBlockZ();
+    }
 
     private record DungeonDefinition(String id, String template, String displayName, Location origin) { }
     private record DungeonRun(String id, UUID leader, String leaderName, List<UUID> members, long startedAt) { }
